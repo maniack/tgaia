@@ -24,7 +24,8 @@ var limitSpecs = map[string]limitSpec{
 	"llm_input_bytes": {"128000", 16000, 1000000, false}, "llm_output_tokens": {"2048", 64, 65536, false}, "embedding_timeout": {"30s", 1000, 3600000, true},
 	"reply_messages": {"30", 1, 200, false}, "reply_context_bytes": {"100000", 1000, 900000, false},
 	"compaction_messages": {"100", 1, 200, false}, "compaction_input_bytes": {"90000", 1000, 900000, false}, "compaction_output_tokens": {"2048", 64, 65536, false},
-	"tool_timeout": {"5m", 1000, 3600000, true}, "tool_rounds": {"4", 1, 32, false}, "tool_calls": {"8", 1, 64, false}, "tool_context_bytes": {"118000", 1000, 950000, false},
+	"compaction_min_messages": {"10", 1, 200, false}, "compaction_summary_chars": {"6000", 500, 16000, false},
+	"tool_timeout": {"5m", 1000, 3600000, true}, "tool_rounds": {"4", 1, 32, false}, "tool_calls": {"8", 1, 64, false}, "tool_context_bytes": {"118000", 1000, 950000, false}, "tool_output_tokens": {"4096", 64, 65536, false},
 	"media_messages":          {"4", 1, 20, false},
 	"llm_calls_per_chat_hour": {"0", 0, 100000, false}, "compaction_calls_per_chat_hour": {"0", 0, 100000, false}, "active_tasks_per_user": {"0", 0, 10000, false},
 }

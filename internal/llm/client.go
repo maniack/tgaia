@@ -465,6 +465,12 @@ func WithOutputBudget(ctx context.Context, n int) context.Context {
 	return context.WithValue(ctx, outputBudgetKey{}, n)
 }
 
+// OutputBudget returns the per-call max_tokens override carried by ctx, or 0.
+func OutputBudget(ctx context.Context) int {
+	n, _ := ctx.Value(outputBudgetKey{}).(int)
+	return n
+}
+
 func WithToolChoice(ctx context.Context, choice string) context.Context {
 	return context.WithValue(ctx, toolChoiceKey{}, choice)
 }

@@ -552,7 +552,8 @@ func schedule(ctx context.Context, r *runtime) {
 			if time.Now().Before(next) {
 				continue
 			}
-			if err := r.db.Agent().Tick(ctx, cfg.MemoryWindow); err != nil && ctx.Err() == nil {
+			policy := storage.CompactionPolicy{MinMessages: cfg.Limit("compaction_min_messages"), MaxUncompact: cfg.Limit("reply_messages")}
+			if err := r.db.Agent().Tick(ctx, cfg.MemoryWindow, policy); err != nil && ctx.Err() == nil {
 				r.log.Error("scheduler tick failed")
 			}
 			next = time.Now().Add(interval)

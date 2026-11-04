@@ -300,8 +300,8 @@ Use the Web UI scope selector for shared policy/identity defaults and API/worker
 | Workers | `worker_concurrency` (4), `worker_poll` (1s), `worker_lease` (30s), `worker_heartbeat` (10s), `worker_timeout` (12m; must exceed `tool_timeout` + `llm_timeout`), `worker_shutdown` (15s), `retry_base` (1s), `retry_max` (1m) |
 | LLM | `llm_concurrency` (4), `llm_timeout` (5m, total ceiling per streamed call), `llm_first_token_timeout` (2m, silence before the first chunk), `llm_idle_timeout` (45s, silence between chunks), `embedding_timeout` (30s), `llm_input_bytes` (128000), `llm_output_tokens` (2048) |
 | Reply context | `reply_messages` (30), `reply_context_bytes` (100000) |
-| Compaction | `compaction_messages` (100), `compaction_input_bytes` (90000), `compaction_output_tokens` (2048) |
-| Tools | `tool_timeout` (5m total phase), `tool_rounds` (4), `tool_calls` (8), `tool_context_bytes` (118000), `mcp_call_timeout` (20s), `mcp_result_bytes` (16000) |
+| Compaction | `compaction_messages` (100), `compaction_input_bytes` (90000), `compaction_output_tokens` (2048), `compaction_min_messages` (10; a chat is compacted once this many messages left the window, or earlier when more than `reply_messages` are unsummarized), `compaction_summary_chars` (6000, hard cap applied in code) |
+| Tools | `tool_timeout` (5m total phase), `tool_rounds` (4), `tool_calls` (8), `tool_output_tokens` (4096 per tool turn), `tool_context_bytes` (118000), `mcp_call_timeout` (20s), `mcp_result_bytes` (16000) |
 | Telegram/media | `telegram_timeout` (35s, minimum 31s for long polling), `image_bytes` (8388608), `document_bytes` (262144), `media_messages` (4) |
 | Shared DB quotas | `llm_calls_per_chat_hour`, `compaction_calls_per_chat_hour`, `active_tasks_per_user` (all 0 = disabled) |
 

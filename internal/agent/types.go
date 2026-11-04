@@ -1,8 +1,11 @@
 package agent
 
 import (
-	"github.com/maniack/tgaia/internal/chat"
+	"fmt"
+	"strings"
 	"time"
+
+	"github.com/maniack/tgaia/internal/chat"
 )
 
 type Attachment struct {
@@ -41,7 +44,26 @@ type Message struct {
 	Role         string `json:"role"`
 	Text         string `json:"text"`
 	SentAt       int64  `json:"sent_at"`
+	// Sender identity as last seen (seen_users), so the model can tell people apart.
+	Username string `json:"username,omitempty"`
+	Name     string `json:"name,omitempty"`
 }
+
+// Who formats a sender for prompts: name, @username and the stable user ID.
+func (m Message) Who() string { return who(m.UserID, m.Name, m.Username) }
+
+func who(id int64, name, username string) string {
+	parts := make([]string, 0, 3)
+	if name != "" {
+		parts = append(parts, fmt.Sprintf("%q", name))
+	}
+	if username != "" {
+		parts = append(parts, "@"+username)
+	}
+	parts = append(parts, fmt.Sprintf("id=%d", id))
+	return strings.Join(parts, " ")
+}
+
 type Task struct {
 	ThreadID   int64  `json:"thread_id"`
 	ID         string `json:"id"`
@@ -76,7 +98,15 @@ type ExplicitMemory struct {
 	EmbeddingModel  string `json:"-"`
 	Embedding       string `json:"-"`
 	CreatedAt       int64  `json:"created_at"`
+	// Author identity as last seen, for unambiguous attribution in prompts.
+	CreatedByUsername string `json:"created_by_username,omitempty"`
+	CreatedByName     string `json:"created_by_name,omitempty"`
 }
+
+func (m ExplicitMemory) Author() string {
+	return who(m.CreatedBy, m.CreatedByName, m.CreatedByUsername)
+}
+
 type Context struct {
 	Summary          Summary
 	Knowledge        string

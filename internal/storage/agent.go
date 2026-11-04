@@ -33,6 +33,21 @@ func scoped(db *gorm.DB, s chat.Scope) *gorm.DB {
 func memoryScoped(db *gorm.DB, s chat.Scope) *gorm.DB {
 	return scoped(db, s)
 }
+
+// historyWithUsers reads conversation_messages joined with the sender's last
+// seen name and username, so prompts can attribute every line to a person.
+func historyWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
+	return db.Table("conversation_messages AS m").Select("m.*, u.username, u.name").
+		Joins("LEFT JOIN seen_users u ON u.agent_id=m.agent_id AND u.user_id=m.user_id").
+		Where("m.agent_id=? AND m.bot_id=? AND m.chat_id=?", s.AgentID, s.BotID, s.ChatID)
+}
+
+// memoriesWithUsers reads explicit_memories joined with their author's identity.
+func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
+	return db.Table("explicit_memories AS e").Select("e.*, u.username AS created_by_username, u.name AS created_by_name").
+		Joins("LEFT JOIN seen_users u ON u.agent_id=e.agent_id AND u.user_id=e.created_by").
+		Where("e.agent_id=? AND e.bot_id=? AND e.chat_id=?", s.AgentID, s.BotID, s.ChatID)
+}
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
 	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=18").Count(&count).Error; err != nil || count != 1 {
@@ -105,6 +120,12 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 				in.Respond = false
 				in.ReplyMessageID = 0
 			}
+			if old.Text == in.Text && old.Attachments == string(attachments) {
+				// Telegram re-sends edited_message for link-preview and similar
+				// changes. Nothing the model sees changed: record the revision and
+				// neither invalidate memory nor generate a new reply.
+				return tx.Exec("UPDATE conversation_messages SET update_id=? WHERE id=?", in.UpdateID, old.ID).Error
+			}
 			if err := tx.Exec("UPDATE conversation_messages SET text=?,attachments=?,media_text='',update_id=? WHERE id=?", in.Text, string(attachments), in.UpdateID, old.ID).Error; err != nil {
 				return err
 			}
@@ -157,16 +178,16 @@ func (a *AgentStore) Context(ctx context.Context, s chat.Scope, through int64, l
 		return result, errors.New("reading knowledge failed")
 	}
 	result.Knowledge = knowledge.Content
-	if err := memoryScoped(db.Table("explicit_memories"), s).Order("created_at DESC,source_message_id DESC").Limit(100).Find(&result.ExplicitMemories).Error; err != nil {
+	if err := memoriesWithUsers(db, s).Order("e.created_at DESC,e.source_message_id DESC").Limit(100).Find(&result.ExplicitMemories).Error; err != nil {
 		return result, errors.New("reading explicit memory failed")
 	}
-	query := memoryScoped(db.Table("conversation_messages"), s).Where("id>?", result.Summary.ThroughID)
+	query := historyWithUsers(db, s).Where("m.id>?", result.Summary.ThroughID)
 	if through > 0 {
-		query = query.Where("id<=?", through)
+		query = query.Where("m.id<=?", through)
 	}
-	order := "id DESC"
+	order := "m.id DESC"
 	if through > 0 {
-		order = "id ASC"
+		order = "m.id ASC"
 	}
 	if err := query.Order(order).Limit(limit).Find(&result.Messages).Error; err != nil {
 		return result, errors.New("reading history failed")
@@ -266,7 +287,7 @@ func (a *AgentStore) SearchExplicitMemories(ctx context.Context, scope chat.Scop
 		return nil, errors.New("invalid explicit memory search")
 	}
 	var rows []agent.ExplicitMemory
-	if err := memoryScoped(a.db.WithContext(ctx).Table("explicit_memories"), scope).Where("embedding_model=?", model).Order("created_at DESC,source_message_id DESC").Limit(500).Find(&rows).Error; err != nil {
+	if err := memoriesWithUsers(a.db.WithContext(ctx), scope).Where("e.embedding_model=?", model).Order("e.created_at DESC,e.source_message_id DESC").Limit(500).Find(&rows).Error; err != nil {
 		return nil, errors.New("searching explicit memory failed")
 	}
 	type match struct {
@@ -470,7 +491,7 @@ func (a *AgentStore) ReplyContext(ctx context.Context, s chat.Scope, messageID i
 		c.Summary = agent.Summary{}
 	}
 	c.Messages = nil
-	if err := memoryScoped(a.db.WithContext(ctx).Table("conversation_messages"), s).Where("id>? AND id<=?", c.Summary.ThroughID, target.ID).Order("id DESC").Limit(limit).Find(&c.Messages).Error; err != nil {
+	if err := historyWithUsers(a.db.WithContext(ctx), s).Where("m.id>? AND m.id<=?", c.Summary.ThroughID, target.ID).Order("m.id DESC").Limit(limit).Find(&c.Messages).Error; err != nil {
 		return c, time.Time{}, errors.New("reply context unavailable")
 	}
 	for l, r := 0, len(c.Messages)-1; l < r; l, r = l+1, r-1 {

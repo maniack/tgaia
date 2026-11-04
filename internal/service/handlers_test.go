@@ -165,7 +165,7 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 	if err := e.Respond(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(model.input[1].Content, memory) || !strings.Contains(model.input[1].Content, "created_by=7") {
+	if !strings.Contains(model.input[1].Content, memory) || !strings.Contains(model.input[1].Content, "saved_by=id=7") {
 		t.Fatal("explicit memory was not retrieved into model context")
 	}
 	if strings.Index(model.input[1].Content, memory) > strings.Index(model.input[1].Content, otherMemory) {
