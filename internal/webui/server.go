@@ -100,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/state", s.state)
 		r.Get("/api/lists/{kind}", s.list)
 		r.Post("/api/resolve-outcome", s.mutation((*Server).resolveOutcome))
+		r.Post("/api/queue-replay", s.mutation((*Server).queueReplay))
 		r.Get("/api/runtime", func(w http.ResponseWriter, r *http.Request) {
 			if s.RuntimeStatus != nil {
 				send(w, s.RuntimeStatus())
@@ -520,6 +521,21 @@ func (s *Server) resolveOutcome(w http.ResponseWriter, r *http.Request) {
 	group, _ := webauth.Session(r)
 	err := s.DB.Agent().ResolveOutcome(r.Context(), in, group)
 	if errors.Is(err, storage.ErrResolutionConflict) {
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	result(w, err)
+}
+
+func (s *Server) queueReplay(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		JobID int64 `json:"job_id"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	err := s.DB.Queue().Replay(r.Context(), in.JobID)
+	if errors.Is(err, storage.ErrNotDead) {
 		http.Error(w, err.Error(), 409)
 		return
 	}

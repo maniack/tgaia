@@ -437,6 +437,11 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 			if err != nil {
 				return err
 			}
+			worker.OnDead(func(ctx context.Context, job queue.Job, class string) {
+				if current := r.current.Load(); current != nil && job.Scope.AgentID == current.config.AgentID {
+					current.engine.Failed(ctx, job, class)
+				}
+			})
 			workers = startGroup(ctx, func(ctx context.Context) {
 				var wg sync.WaitGroup
 				wg.Add(1)

@@ -31,7 +31,13 @@ type Worker struct {
 	kinds    []string
 	opts     Options
 	log      *slog.Logger
+	dead     func(context.Context, Job, string)
 }
+
+// OnDead registers a best-effort notification that runs once, after a job was
+// retired as dead by this worker (terminal failure or exhausted attempts). It
+// must be set before Run and must not be used for durable work.
+func (w *Worker) OnDead(fn func(ctx context.Context, job Job, class string)) { w.dead = fn }
 
 func NewWorker(store Store, handlers map[string]Handler, opts Options, log *slog.Logger) (*Worker, error) {
 	if store == nil || log == nil || len(handlers) == 0 || opts.Concurrency < 1 || opts.Concurrency > 256 || opts.PollInterval <= 0 || opts.Lease < time.Millisecond || opts.Lease > 24*time.Hour || opts.Heartbeat <= 0 || opts.Heartbeat > opts.Lease/3 || opts.TaskTimeout <= 0 || opts.ShutdownTimeout <= 0 || opts.RetryBase < time.Millisecond || opts.RetryMax < opts.RetryBase || opts.RetryMax > 24*time.Hour {
@@ -137,20 +143,38 @@ func (w *Worker) execute(parent context.Context, job Job) {
 	settleCtx, stop := context.WithTimeout(parent, w.opts.Heartbeat)
 	defer stop()
 	if err == nil {
-		err = w.store.Complete(settleCtx, job.Receipt)
+		if err = w.store.Complete(settleCtx, job.Receipt); err != nil {
+			w.log.WarnContext(parent, "queue settlement failed", "job_id", job.ID)
+		}
+		return
+	}
+	// Never persist or log raw handler errors: they may contain prompts/secrets.
+	// The bounded class and phase are safe and sufficient for diagnosis.
+	class, terminal := Classify(err)
+	dead := terminal || job.Exhausted()
+	w.log.WarnContext(parent, "queue handler failed", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "class", class, "phase", Phase(err), "terminal", terminal, "dead", dead)
+	if terminal {
+		err = w.store.Fail(settleCtx, job.Receipt)
 	} else {
-		// Never persist or log raw handler errors: they may contain prompts/secrets.
-		w.log.WarnContext(parent, "queue handler failed", "job_id", job.ID, "attempt", job.Attempt)
 		err = w.store.Retry(settleCtx, job.Receipt, w.backoff(job.Attempt))
 	}
 	if err != nil {
 		w.log.WarnContext(parent, "queue settlement failed", "job_id", job.ID)
+		return
+	}
+	if dead && w.dead != nil {
+		notifyCtx, stopNotify := context.WithTimeout(parent, w.opts.Heartbeat)
+		defer stopNotify()
+		func() {
+			defer func() { _ = recover() }()
+			w.dead(notifyCtx, job, class)
+		}()
 	}
 }
 func invoke(ctx context.Context, h Handler, job Job) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = errors.New("handler panic")
+			err = Fail("panic", false, errors.New("handler panic"))
 		}
 	}()
 	return h(ctx, job)

@@ -54,11 +54,11 @@ func TestToolCheckpointsSurviveRetry(t *testing.T) {
 		job := take(t, e, "respond")
 		ctx := context.Background()
 		request := []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}
-		if _, err := e.toolContext(ctx, *job, request); err != nil {
+		if _, _, err := e.toolContext(ctx, *job, request); err != nil {
 			t.Fatal(err)
 		}
 		plans := f.plans
-		if _, err := e.toolContext(ctx, *job, request); err != nil {
+		if _, _, err := e.toolContext(ctx, *job, request); err != nil {
 			t.Fatal(err)
 		}
 		if f.calls != 1 || f.plans != plans {
@@ -81,7 +81,7 @@ func TestStartedToolNeverRepeated(t *testing.T) {
 	if _, err := e.DB.Agent().StartTool(ctx, *job, "call:0:0", `{"id":"c1","type":"function","function":{"name":"lookup","arguments":"{}"}}`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.toolContext(ctx, *job, []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}); err != nil {
+	if _, _, err := e.toolContext(ctx, *job, []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}); err != nil {
 		t.Fatal(err)
 	}
 	if f.calls != 0 {
@@ -173,7 +173,7 @@ func TestReActThinkingToolLoop(t *testing.T) {
 	ctx := context.Background()
 	respondPrompt, _ := prompts.ReadFile("prompts/respond.txt")
 	request := []llm.Message{{Role: "system", Content: string(respondPrompt) + "\nBot administrator instructions:\nBe helpful"}, {Role: "user", Content: "find info about golang"}}
-	output, err := e.toolContext(ctx, *job, request)
+	output, final, err := e.toolContext(ctx, *job, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,8 +194,12 @@ func TestReActThinkingToolLoop(t *testing.T) {
 	if !strings.Contains(output[0].Content, "Output ONLY one JSON object") {
 		t.Fatal("final toolContext output should restore respond.txt in output[0]")
 	}
-	// Verify final tool context contains all turns and instructions
-	if len(output) < 6 {
-		t.Fatalf("expected comprehensive message history in toolContext output, got %d messages", len(output))
+	// The closing text turn is the reply itself: no second full generation. The
+	// metadata request carries the conversation and the reply, not the transcript.
+	if final != "I have gathered the full details." {
+		t.Fatalf("expected the tool phase text as final reply, got %q", final)
+	}
+	if len(output) != 3 || output[2].Role != "assistant" || output[2].Content != final {
+		t.Fatalf("expected system, user and final assistant messages, got %d messages", len(output))
 	}
 }

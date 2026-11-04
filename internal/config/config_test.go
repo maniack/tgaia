@@ -76,6 +76,10 @@ func TestOIDCAdminGroupsConfiguration(t *testing.T) {
 	if err := ValidateEnv([]string{"TGAIA_LLM_THINKING=true"}); err != nil {
 		t.Fatal(err)
 	}
+	// Kubernetes service links for Services named tgaia / tgaia-* are not configuration.
+	if err := ValidateEnv([]string{"TGAIA_API_SERVICE_HOST=10.0.0.1", "TGAIA_API_SERVICE_PORT=8080", "TGAIA_API_PORT=tcp://10.0.0.1:8080", "TGAIA_DB_PORT_5432_TCP_ADDR=10.0.0.2", "TGAIA_PORT=tcp://10.0.0.1:8080"}); err != nil {
+		t.Fatal("service link variables rejected:", err)
+	}
 	if err := ValidateEnv([]string{"TGAIA_ADMIN_SUBJECTS=legacy"}); err == nil {
 		t.Fatal("legacy subject allowlist environment variable accepted")
 	}

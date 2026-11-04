@@ -181,17 +181,18 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 	for _, other := range []chat.Scope{
 		{AgentID: scope.AgentID, BotID: 2, ChatID: scope.ChatID},
 		{AgentID: scope.AgentID, BotID: scope.BotID, ChatID: 200},
-		{AgentID: scope.AgentID, BotID: scope.BotID, ChatID: scope.ChatID, ThreadID: 99},
 	} {
-		if other.ChatID != scope.ChatID {
-			accept(t, e, other, 10+other.ChatID, "hello", false)
-		} else if other.ThreadID != 0 {
-			accept(t, e, other, 99, "hello", false)
-		}
+		accept(t, e, other, 10+other.ChatID, "hello", false)
 		context, err := e.DB.Agent().Context(ctx, other, 0, 30)
 		if err != nil || len(context.ExplicitMemories) != 0 {
 			t.Fatalf("explicit memory crossed scope %+v: %+v, %v", other, context.ExplicitMemories, err)
 		}
+	}
+	// Another topic of the same chat shares the chat's memory.
+	topic := chat.Scope{AgentID: scope.AgentID, BotID: scope.BotID, ChatID: scope.ChatID, ThreadID: 99}
+	accept(t, e, topic, 99, "hello", false)
+	if context, err := e.DB.Agent().Context(ctx, topic, 0, 30); err != nil || len(context.ExplicitMemories) == 0 {
+		t.Fatalf("explicit memory not shared across topics: %+v, %v", context.ExplicitMemories, err)
 	}
 
 	model.reply = `{"reply":"Исправил.","schedule":null,"remember":null}`

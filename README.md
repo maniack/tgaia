@@ -9,7 +9,7 @@ Telegram AI assistant in Go. Architecture and security requirements live in
 The current implementation includes Telegram polling/webhooks, an OpenAI-compatible LLM adapter,
 DB queue/workers, scheduled prompts, isolated chat memory with background compaction,
 and an OIDC-protected administration UI. Users can explicitly ask a bot to remember a
-fact for later retrieval within that bot/chat/topic only. Private messages trigger replies; in groups,
+fact for later retrieval within that bot/chat only (shared by all forum topics of the chat). Private messages trigger replies; in groups,
 only mentions of this bot and replies to this bot do. Other received text contributes
 to the chat's context. All bots have independent history, summaries and system prompts.
 Administrator-published knowledge is the explicit shared layer.
@@ -93,7 +93,7 @@ action and persisted with the application's current conversation scope; the mode
 cannot select another bot or chat. Set `app.memory.embedding_model: bge-m3` (or
 `TGAIA_MEMORY_EMBEDDING_MODEL`) to use the configured OpenAI-compatible LLM endpoint
 and key for embeddings. Later requests use cosine similarity over only the current
-bot/chat/topic, merge the top semantic matches with recent memories, and pass at most
+bot/chat (all of its topics), merge the top semantic matches with recent memories, and pass at most
 16 KB to the response model. No pgvector extension is required. Reader-only and
 anonymous senders cannot add memories, and editing the source request invalidates its
 old stored fact before regeneration. Changing the embedding model does not mix vector
@@ -276,8 +276,9 @@ Reference: [GitHub container publication guide](https://docs.github.com/en/actio
 
 ## Telegram media, topics and sender identity
 
-Forum topics have separate history and summaries; outgoing replies and scheduled tasks
-retain their topic. Chat blocks cover all topics. Edits update stored content and
+Forum topics share one history, one memory summary and one set of explicit memories per
+chat (migration 018 collapses earlier per-topic summaries, keeping the most advanced one);
+outgoing replies and scheduled tasks still retain their topic. Chat blocks cover all topics. Edits update stored content and
 invalidate affected summaries. Hidden authors/channel principals get reply-only access
 on mentions/replies; they cannot invoke tools or create tasks.
 
@@ -296,11 +297,11 @@ Use the Web UI scope selector for shared policy/identity defaults and API/worker
 
 | Group | Settings (defaults) |
 | --- | --- |
-| Workers | `worker_concurrency` (4), `worker_poll` (1s), `worker_lease` (30s), `worker_heartbeat` (10s), `worker_timeout` (2m), `worker_shutdown` (15s), `retry_base` (1s), `retry_max` (1m) |
-| LLM | `llm_concurrency` (4), `llm_timeout` (110s), `llm_input_bytes` (128000), `llm_output_tokens` (2048) |
+| Workers | `worker_concurrency` (4), `worker_poll` (1s), `worker_lease` (30s), `worker_heartbeat` (10s), `worker_timeout` (12m; must exceed `tool_timeout` + `llm_timeout`), `worker_shutdown` (15s), `retry_base` (1s), `retry_max` (1m) |
+| LLM | `llm_concurrency` (4), `llm_timeout` (5m, total ceiling per streamed call), `llm_first_token_timeout` (2m, silence before the first chunk), `llm_idle_timeout` (45s, silence between chunks), `embedding_timeout` (30s), `llm_input_bytes` (128000), `llm_output_tokens` (2048) |
 | Reply context | `reply_messages` (30), `reply_context_bytes` (100000) |
 | Compaction | `compaction_messages` (100), `compaction_input_bytes` (90000), `compaction_output_tokens` (2048) |
-| Tools | `tool_timeout` (75s total phase), `tool_rounds` (4), `tool_calls` (8), `tool_context_bytes` (118000), `mcp_call_timeout` (20s), `mcp_result_bytes` (16000) |
+| Tools | `tool_timeout` (5m total phase), `tool_rounds` (4), `tool_calls` (8), `tool_context_bytes` (118000), `mcp_call_timeout` (20s), `mcp_result_bytes` (16000) |
 | Telegram/media | `telegram_timeout` (35s, minimum 31s for long polling), `image_bytes` (8388608), `document_bytes` (262144), `media_messages` (4) |
 | Shared DB quotas | `llm_calls_per_chat_hour`, `compaction_calls_per_chat_hour`, `active_tasks_per_user` (all 0 = disabled) |
 

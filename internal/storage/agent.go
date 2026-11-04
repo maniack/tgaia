@@ -26,12 +26,16 @@ func (d *Database) Agent() *AgentStore { return &AgentStore{db: d.orm} }
 func scoped(db *gorm.DB, s chat.Scope) *gorm.DB {
 	return db.Where("agent_id=? AND bot_id=? AND chat_id=?", s.AgentID, s.BotID, s.ChatID)
 }
+
+// memoryScoped selects conversation memory for a chat. Memory (history,
+// summaries, explicit facts) is shared by all forum topics of a chat since
+// migration 018; only delivery destinations and tasks keep their topic.
 func memoryScoped(db *gorm.DB, s chat.Scope) *gorm.DB {
-	return scoped(db, s).Where("thread_id=?", s.ThreadID)
+	return scoped(db, s)
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=17").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=18").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -327,7 +331,8 @@ func (a *AgentStore) SaveSummary(ctx context.Context, job queue.Job, previous, t
 		if existing.ThroughID != previous {
 			return errors.New("summary checkpoint conflict")
 		}
-		if err := tx.Exec(`INSERT INTO memory_summaries (agent_id,bot_id,chat_id,thread_id,through_id,content) VALUES (?,?,?,?,?,?) ON CONFLICT (agent_id,bot_id,chat_id,thread_id) DO UPDATE SET through_id=excluded.through_id,content=excluded.content`, job.Scope.AgentID, job.Scope.BotID, job.Scope.ChatID, job.Scope.ThreadID, through, content).Error; err != nil {
+		// One chat-wide summary row, kept in topic 0 regardless of the job's topic.
+		if err := tx.Exec(`INSERT INTO memory_summaries (agent_id,bot_id,chat_id,thread_id,through_id,content) VALUES (?,?,?,0,?,?) ON CONFLICT (agent_id,bot_id,chat_id,thread_id) DO UPDATE SET through_id=excluded.through_id,content=excluded.content`, job.Scope.AgentID, job.Scope.BotID, job.Scope.ChatID, through, content).Error; err != nil {
 			return errors.New("saving summary failed")
 		}
 		return nil
@@ -375,6 +380,21 @@ func (a *AgentStore) BeginSend(ctx context.Context, job queue.Job, part int, tex
 		return false, errors.New("preparing delivery failed")
 	}
 	return applied, nil
+}
+
+// AbandonSend withdraws a delivery intent that Telegram definitely rejected
+// before anything was sent, so the same part can be delivered in another form.
+func (a *AgentStore) AbandonSend(ctx context.Context, job queue.Job, part int) error {
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := fence(tx, job); err != nil {
+			return err
+		}
+		return tx.Exec("DELETE FROM outbound_deliveries WHERE job_id=? AND part=? AND state='sending'", job.ID, part).Error
+	})
+	if err != nil {
+		return errors.New("withdrawing delivery failed")
+	}
+	return nil
 }
 func (a *AgentStore) MarkUncertain(ctx context.Context, id int64, part int) error {
 	if err := a.db.WithContext(ctx).Exec("UPDATE outbound_deliveries SET state='uncertain',version=version+1 WHERE job_id=? AND part=? AND state='sending'", id, part).Error; err != nil {

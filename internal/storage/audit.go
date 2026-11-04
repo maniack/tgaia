@@ -63,6 +63,9 @@ func (d *Database) AuditState(ctx context.Context, path string, body map[string]
 	case "/api/resolve-outcome":
 		query = "SELECT id,job_id,target,action,subject,reason,created_at FROM outcome_resolutions WHERE job_id=? AND target=?"
 		args = []any{body["job_id"], body["target"]}
+	case "/api/queue-replay":
+		query = "SELECT id,kind,status,attempts,max_attempts FROM queue_jobs WHERE id=?"
+		args = []any{body["job_id"]}
 	default:
 		return "[]", nil
 	}

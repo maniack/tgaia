@@ -76,6 +76,7 @@ type claimedJob struct {
 	Kind         string
 	Payload      string
 	Attempts     int
+	MaxAttempts  int
 	LeaseToken   string
 }
 
@@ -114,7 +115,7 @@ func (q *Queue) Claim(ctx context.Context, kinds []string, lease time.Duration) 
  AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE b.agent_id=j.agent_id AND b.user_id=j.actor_user_id) AND j.attempts<j.max_attempts
  AND ((j.status IN ('pending','retry') AND j.available_at<=` + q.now + `) OR (j.status='leased' AND j.lease_until<=` + q.now + `))
  AND NOT EXISTS (SELECT 1 FROM queue_jobs earlier WHERE earlier.agent_id=j.agent_id AND earlier.bot_id=j.bot_id AND earlier.chat_id=j.chat_id AND earlier.id<j.id AND earlier.status IN ('pending','leased','retry'))
- ORDER BY j.id LIMIT 1` + q.locking + `) RETURNING id,agent_id,bot_id,chat_id,thread_id,sender_chat_id,actor_user_id,kind,payload,attempts,lease_token`
+ ORDER BY j.id LIMIT 1` + q.locking + `) RETURNING id,agent_id,bot_id,chat_id,thread_id,sender_chat_id,actor_user_id,kind,payload,attempts,max_attempts,lease_token`
 	var row claimedJob
 	result := q.db.WithContext(ctx).Raw(query, token, lease.Milliseconds(), kinds).Scan(&row)
 	if result.Error != nil {
@@ -123,7 +124,7 @@ func (q *Queue) Claim(ctx context.Context, kinds []string, lease time.Duration) 
 	if result.RowsAffected == 0 {
 		return nil, nil
 	}
-	return &queue.Job{Receipt: queue.Receipt{ID: row.ID, Token: row.LeaseToken}, Scope: queue.Scope{AgentID: row.AgentID, BotID: row.BotID, ChatID: row.ChatID, ThreadID: row.ThreadID}, SenderChatID: row.SenderChatID, ActorUserID: row.ActorUserID, Kind: row.Kind, Payload: []byte(row.Payload), Attempt: row.Attempts}, nil
+	return &queue.Job{Receipt: queue.Receipt{ID: row.ID, Token: row.LeaseToken}, Scope: queue.Scope{AgentID: row.AgentID, BotID: row.BotID, ChatID: row.ChatID, ThreadID: row.ThreadID}, SenderChatID: row.SenderChatID, ActorUserID: row.ActorUserID, Kind: row.Kind, Payload: []byte(row.Payload), Attempt: row.Attempts, MaxAttempts: row.MaxAttempts}, nil
 }
 func (q *Queue) owned(ctx context.Context, r queue.Receipt, assignments string, args ...any) error {
 	args = append(args, r.ID, r.Token)
@@ -151,4 +152,31 @@ func (q *Queue) Retry(ctx context.Context, r queue.Receipt, delay time.Duration)
 		return errors.New("invalid retry delay")
 	}
 	return q.owned(ctx, r, "status=CASE WHEN attempts>=max_attempts THEN 'dead' ELSE 'retry' END,available_at="+q.now+"+?,lease_token='',lease_until=0", delay.Milliseconds())
+}
+
+// Fail retires a job after a deterministic failure; the remaining attempts would
+// only repeat the same work against the same input.
+func (q *Queue) Fail(ctx context.Context, r queue.Receipt) error {
+	return q.owned(ctx, r, "status='dead',lease_token='',lease_until=0")
+}
+
+var ErrNotDead = errors.New("job is not dead")
+
+// Replay returns a dead job to the queue with a fresh attempt budget. Durable
+// checkpoints (tool turns, cached results, delivery receipts) are preserved, so
+// the replay resumes rather than repeats completed steps. The job runs in its
+// original scope order like any other pending job.
+func (q *Queue) Replay(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return errors.New("invalid job")
+	}
+	result := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET status='pending',attempts=0,lease_token='',lease_until=0,available_at=`+q.now+`,updated_at=`+q.now+`
+ WHERE id=? AND status='dead' AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE b.agent_id=queue_jobs.agent_id AND b.user_id=queue_jobs.actor_user_id)`, id)
+	if result.Error != nil {
+		return errors.New("queue replay failed")
+	}
+	if result.RowsAffected != 1 {
+		return ErrNotDead
+	}
+	return nil
 }

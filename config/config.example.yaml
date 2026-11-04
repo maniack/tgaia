@@ -109,8 +109,8 @@ app:
     worker_lease: 30s
     # Lease-renewal interval; it must not exceed one third of worker_lease.
     worker_heartbeat: 10s
-    # Maximum duration of one queue-job attempt.
-    worker_timeout: 2m
+    # Maximum duration of one queue-job attempt; it must exceed tool_timeout plus llm_timeout.
+    worker_timeout: 12m
     # Grace period for worker shutdown.
     worker_shutdown: 15s
     # Initial retry backoff.
@@ -119,8 +119,14 @@ app:
     retry_max: 1m
     # Maximum simultaneous LLM requests per process.
     llm_concurrency: "4"
-    # Timeout for one LLM request.
-    llm_timeout: 110s
+    # Total ceiling for one streamed LLM call, however long tokens keep arriving.
+    llm_timeout: 5m
+    # Silence allowed before the first streamed chunk (prefill of long prompts is slow).
+    llm_first_token_timeout: 2m
+    # Silence allowed between streamed chunks; a stalled generation fails here.
+    llm_idle_timeout: 45s
+    # Timeout for one embedding request, independent of the chat ceiling.
+    embedding_timeout: 30s
     # Hard byte ceiling for assembled LLM input.
     llm_input_bytes: "128000"
     # Requested maximum output tokens.
@@ -136,7 +142,7 @@ app:
     # Requested maximum tokens for a generated summary.
     compaction_output_tokens: "2048"
     # Overall timeout for the model/tool phase of a job.
-    tool_timeout: 75s
+    tool_timeout: 5m
     # Maximum model/tool interaction rounds.
     tool_rounds: "4"
     # Maximum tool calls in one job.

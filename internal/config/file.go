@@ -102,11 +102,18 @@ func ValidateEnv(environ []string) error {
 	}
 	for _, entry := range environ {
 		key, _, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(key, "TGAIA_") && !allowed[key] {
+		if strings.HasPrefix(key, "TGAIA_") && !allowed[key] && !serviceLinkEnv(key) {
 			return errors.New("unknown TGAIA_ environment variable; check configuration spelling")
 		}
 	}
 	return nil
+}
+
+// serviceLinkEnv recognizes Kubernetes service-link variables injected for
+// Services named tgaia or tgaia-*: TGAIA_API_SERVICE_HOST, TGAIA_PORT,
+// TGAIA_DB_PORT_5432_TCP_ADDR and so on. They are never configuration.
+func serviceLinkEnv(key string) bool {
+	return strings.Contains(key, "_SERVICE_") || key == "TGAIA_PORT" || strings.Contains(key, "_PORT_") || strings.HasSuffix(key, "_PORT")
 }
 
 func stringValues(values map[any]any) bool {

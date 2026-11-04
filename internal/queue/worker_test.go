@@ -16,6 +16,7 @@ type testStore struct {
 	extends   int
 	completed int
 	retries   int
+	failed    int
 	delay     time.Duration
 	loseLease bool
 	settled   chan struct{}
@@ -55,6 +56,13 @@ func (s *testStore) Retry(ctx context.Context, r Receipt, delay time.Duration) e
 	defer s.mu.Unlock()
 	s.retries++
 	s.delay = delay
+	close(s.settled)
+	return nil
+}
+func (s *testStore) Fail(ctx context.Context, r Receipt) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failed++
 	close(s.settled)
 	return nil
 }
@@ -126,6 +134,54 @@ func TestWorkerSettlement(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+func TestWorkerTerminalFailureRetiresJob(t *testing.T) {
+	store := &testStore{settled: make(chan struct{})}
+	w := worker(t, store, func(context.Context, Job) error {
+		return WithPhase(Fail("llm_timeout", true, errors.New("secret detail")), "tool_turn:0")
+	}, options())
+	dead := make(chan string, 1)
+	w.OnDead(func(_ context.Context, job Job, class string) { dead <- class })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+	await(t, store.settled)
+	select {
+	case class := <-dead:
+		if class != "llm_timeout" {
+			t.Fatalf("unexpected class %q", class)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("dead notification missing")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.failed != 1 || store.retries != 0 || store.completed != 0 {
+		t.Fatalf("terminal failure not retired: failed=%d retries=%d", store.failed, store.retries)
+	}
+}
+func TestClassify(t *testing.T) {
+	if class, terminal := Classify(errors.New("x")); class != "handler_error" || terminal {
+		t.Fatal("plain errors must retry as handler_error")
+	}
+	if class, terminal := Classify(context.DeadlineExceeded); class != "job_timeout" || terminal {
+		t.Fatal("job deadline must retry as job_timeout")
+	}
+	err := WithPhase(Fail("llm_429", false, nil), "final")
+	if class, terminal := Classify(err); class != "llm_429" || terminal || Phase(err) != "final" {
+		t.Fatal("classified failure lost its class or phase")
+	}
+	if class, _ := Classify(Fail("Bad Class!", true, nil)); class != "other" {
+		t.Fatal("unbounded class names must collapse to other")
+	}
+	if (Job{Attempt: 3, MaxAttempts: 3}).Exhausted() != true || (Job{Attempt: 3}).Exhausted() {
+		t.Fatal("exhaustion must require a reported attempt budget")
 	}
 }
 func TestWorkerHeartbeat(t *testing.T) {

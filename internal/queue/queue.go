@@ -32,13 +32,19 @@ type Job struct {
 	Kind         string
 	Payload      []byte
 	Attempt      int
+	MaxAttempts  int // Zero when the store predates attempt reporting.
 }
+
+// Exhausted reports whether this attempt was the job's last one.
+func (j Job) Exhausted() bool { return j.MaxAttempts > 0 && j.Attempt >= j.MaxAttempts }
 
 type Store interface {
 	Claim(context.Context, []string, time.Duration) (*Job, error)
 	Extend(context.Context, Receipt, time.Duration) error
 	Complete(context.Context, Receipt) error
 	Retry(context.Context, Receipt, time.Duration) error
+	// Fail retires the job immediately without consuming the remaining attempts.
+	Fail(context.Context, Receipt) error
 }
 
 type Handler func(context.Context, Job) error

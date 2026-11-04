@@ -14,7 +14,7 @@ import (
 func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 17)
+			db, _ := databasesAtVersion(t, driver, 18)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 10}
 			second := first
@@ -32,16 +32,25 @@ func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 			if err := db.Agent().Accept(ctx, other); err != nil {
 				t.Fatal(err)
 			}
+			// Topics of one chat share history and memory; only delivery keeps the topic.
 			c, err := db.Agent().Context(ctx, first, 0, 50)
-			if err != nil || len(c.Messages) != 1 || c.Messages[0].Text != "original" {
-				t.Fatal("topic leaked", err)
+			if err != nil || len(c.Messages) != 2 || c.Messages[0].Text != "original" || c.Messages[1].Text != "other topic" {
+				t.Fatal("topic history not shared", err)
 			}
 			job, err := db.Queue().Claim(ctx, []string{"respond"}, time.Minute)
 			if err != nil || job == nil || job.Scope.ThreadID != 10 {
 				t.Fatal("queue lost topic", err)
 			}
-			if err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[0].ID, "old summary", 0); err != nil {
+			if err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[1].ID, "old summary", 0); err != nil {
 				t.Fatal(err)
+			}
+			if other, err := db.Agent().Context(ctx, second, 0, 50); err != nil || other.Summary.Content != "old summary" || len(other.Messages) != 0 {
+				t.Fatal("summary not shared with the other topic", err)
+			}
+			var summaryTopic int64 = -1
+			db.orm.Table("memory_summaries").Select("thread_id").Where("chat_id=100").Scan(&summaryTopic)
+			if summaryTopic != 0 {
+				t.Fatal("chat-wide summary must live in topic 0")
 			}
 			in.Edited = true
 			in.UpdateID = 3
@@ -50,10 +59,10 @@ func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 				t.Fatal(err)
 			}
 			c, err = db.Agent().Context(ctx, first, 0, 50)
-			if err != nil || c.Summary.Content != "" || len(c.Messages) != 1 || c.Messages[0].Text != "corrected" {
+			if err != nil || c.Summary.Content != "" || len(c.Messages) != 2 || c.Messages[0].Text != "corrected" {
 				t.Fatal("edit not reflected", err)
 			}
-			if err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[0].ID, "stale", 0); err == nil {
+			if err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[1].ID, "stale", 0); err == nil {
 				t.Fatal("stale compaction committed")
 			}
 			if current, err := db.Agent().ResponseCurrent(ctx, first, 1, 1); err != nil || current {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,7 +20,11 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-type measurement struct{ count, failures, nanos, inflight atomic.Int64 }
+type measurement struct {
+	count, failures, nanos, inflight atomic.Int64
+	mu                               sync.Mutex
+	classes                          map[string]int64
+}
 type Monitor struct {
 	WorkerRunning atomic.Bool
 	mu            sync.Mutex
@@ -29,8 +34,12 @@ type Monitor struct {
 }
 
 func New() *Monitor {
-	return &Monitor{jobs: map[string]*measurement{"respond": {}, "compact": {}, "message_action": {}}}
+	return &Monitor{jobs: map[string]*measurement{"respond": {classes: map[string]int64{}}, "compact": {classes: map[string]int64{}}, "message_action": {classes: map[string]int64{}}}}
 }
+
+// failureClasses bounds the label set; classes outside it count as "other".
+var failureClasses = map[string]bool{"llm_timeout": true, "llm_429": true, "llm_http_5xx": true, "llm_http_4xx": true, "llm_network": true, "llm_truncated": true, "llm_invalid": true, "llm_budget": true, "embedding_timeout": true, "embedding_failed": true, "mcp_timeout": true, "mcp_failed": true, "quota": true, "budget": true, "panic": true, "job_timeout": true, "canceled": true, "lease_lost": true, "handler_error": true}
+
 func (m *Monitor) Configure(ctx context.Context, endpoint string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -89,7 +98,15 @@ func (m *Monitor) Handle(ctx context.Context, j queue.Job, h queue.Handler) erro
 	err := h(ctx, j)
 	if err != nil {
 		measurement.failures.Add(1)
+		class, terminal := queue.Classify(err)
+		if !failureClasses[class] {
+			class = "other"
+		}
+		measurement.mu.Lock()
+		measurement.classes[class]++
+		measurement.mu.Unlock()
 		span.SetStatus(codes.Error, "handler failed")
+		span.SetAttributes(attribute.String("failure.class", class), attribute.Bool("failure.terminal", terminal), attribute.String("failure.phase", queue.Phase(err)))
 	}
 	return err
 }
@@ -105,5 +122,19 @@ func (m *Monitor) Metrics(w http.ResponseWriter, r *http.Request) {
 	for _, kind := range []string{"respond", "compact", "message_action"} {
 		v := m.jobs[kind]
 		fmt.Fprintf(w, "tgaia_jobs_total{kind=%q} %d\ntgaia_job_errors_total{kind=%q} %d\ntgaia_job_duration_seconds_sum{kind=%q} %f\ntgaia_jobs_inflight{kind=%q} %d\n", kind, v.count.Load(), kind, v.failures.Load(), kind, float64(v.nanos.Load())/1e9, kind, v.inflight.Load())
+	}
+	fmt.Fprintln(w, "# TYPE tgaia_queue_failures_total counter")
+	for _, kind := range []string{"respond", "compact", "message_action"} {
+		v := m.jobs[kind]
+		v.mu.Lock()
+		classes := make([]string, 0, len(v.classes))
+		for class := range v.classes {
+			classes = append(classes, class)
+		}
+		sort.Strings(classes)
+		for _, class := range classes {
+			fmt.Fprintf(w, "tgaia_queue_failures_total{kind=%q,class=%q} %d\n", kind, class, v.classes[class])
+		}
+		v.mu.Unlock()
 	}
 }

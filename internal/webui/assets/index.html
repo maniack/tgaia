@@ -22,6 +22,7 @@
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-3.6-3.6"/></symbol>
   <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9 4.5a3 3 0 0 0-3 3v.6A3 3 0 0 0 4.5 11a3 3 0 0 0 1.2 4.1A3 3 0 0 0 9 19.5h3V4.5zm6 0a3 3 0 0 1 3 3v.6a3 3 0 0 1 1.5 2.9 3 3 0 0 1-1.2 4.1A3 3 0 0 1 15 19.5h-3V4.5z"/></symbol>
   <symbol id="i-paperplane" viewBox="0 0 24 24"><path d="M20 4L4 10.5l7 2.5 2.5 7z M20 4l-9 9"/></symbol>
+  <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.5 4.5a4.5 4.5 0 0 0 5 6.3L12 18.3a2 2 0 0 1-2.8-2.8l7.5-7.5a4.5 4.5 0 0 0-6.3-5z"/></symbol>
 </svg>
 
 <div class="shell">
@@ -29,6 +30,8 @@
   <a class="brand" href="/"><span class="brand-mark"><svg class="icon"><use href="#i-bubble"/></svg></span><span><span class="brand-name">tgaia</span><span class="brand-sub">Agent workspace</span></span></a>
   <nav class="primary" aria-label="Workspace">
     <button data-tab="conversations" class="selected"><svg class="icon"><use href="#i-bubble"/></svg><span data-short="Chats">Conversations</span></button>
+    <button data-tab="outgoing"><svg class="icon"><use href="#i-paperplane"/></svg><span data-short="Outgoing">Outgoing messages</span></button>
+    <button data-tab="outcomes"><svg class="icon"><use href="#i-wrench"/></svg><span data-short="Outcomes">Tool outcomes</span></button>
     <button data-tab="tasks"><svg class="icon"><use href="#i-clock"/></svg><span data-short="Tasks">Scheduled tasks</span></button>
     <button data-tab="people"><svg class="icon"><use href="#i-people"/></svg><span data-short="People">People &amp; access</span></button>
     <button data-tab="knowledge"><svg class="icon"><use href="#i-book"/></svg><span data-short="Knowledge">Shared knowledge</span></button>
@@ -72,11 +75,23 @@
     </article>
   </div>
 
+</section>
+
+<section id="outgoing" class="view" hidden>
   <div>
     <div class="section-head"><h2>Outgoing messages</h2></div>
+    <p class="section-lead">Every Telegram send with its delivery state. Resolve a sending or uncertain part only after checking the chat.</p>
     <div class="table-scroll"><table><thead><tr><th>Bot / chat</th><th>Message</th><th>Delivery</th></tr></thead><tbody id="deliveries"></tbody></table></div>
   </div>
 
+  <div>
+    <div class="section-head"><h2>Dead jobs</h2></div>
+    <p class="section-lead">Jobs that failed deterministically or exhausted their attempts. Replay keeps completed tool steps and cached results; only unfinished work runs again.</p>
+    <div class="table-scroll"><table><thead><tr><th>Job</th><th>Scope</th><th>Attempts</th><th>Retired</th><th></th></tr></thead><tbody id="dead-jobs"></tbody></table></div>
+  </div>
+</section>
+
+<section id="outcomes" class="view" hidden>
   <div>
     <div class="section-head"><h2>Tool outcomes</h2></div>
     <p class="section-lead">Resolve unknown outcomes only after checking the external system. Calls are never retried automatically.</p>

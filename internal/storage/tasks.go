@@ -130,16 +130,17 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration) error {
 			FromID         int64
 			MemoryRevision int64
 		}
-		if err := tx.Raw(`SELECT m.agent_id,m.bot_id,m.chat_id,m.thread_id,c.memory_revision,MAX(m.id) AS through_id,COALESCE(s.through_id,0) AS from_id FROM conversation_messages m
+		// Compaction is chat-wide: messages of every topic feed one summary.
+		if err := tx.Raw(`SELECT m.agent_id,m.bot_id,m.chat_id,c.memory_revision,MAX(m.id) AS through_id,COALESCE(s.through_id,0) AS from_id FROM conversation_messages m
  JOIN chat_directory c ON c.agent_id=m.agent_id AND c.bot_id=m.bot_id AND c.chat_id=m.chat_id
- LEFT JOIN memory_summaries s ON s.agent_id=m.agent_id AND s.bot_id=m.bot_id AND s.chat_id=m.chat_id AND s.thread_id=m.thread_id
+ LEFT JOIN memory_summaries s ON s.agent_id=m.agent_id AND s.bot_id=m.bot_id AND s.chat_id=m.chat_id
  WHERE c.blocked=? AND m.sent_at<=? AND m.id>COALESCE(s.through_id,0)
- GROUP BY m.agent_id,m.bot_id,m.chat_id,m.thread_id,s.through_id,c.memory_revision ORDER BY MIN(m.id) LIMIT 64`, false, now-window.Milliseconds()).Scan(&scopes).Error; err != nil {
+ GROUP BY m.agent_id,m.bot_id,m.chat_id,s.through_id,c.memory_revision ORDER BY MIN(m.id) LIMIT 64`, false, now-window.Milliseconds()).Scan(&scopes).Error; err != nil {
 			return err
 		}
 		for _, s := range scopes {
 			payload, _ := json.Marshal(agent.JobPayload{ThroughID: s.ThroughID})
-			if _, err := q.Enqueue(ctx, queue.Input{Scope: chat.Scope{AgentID: s.AgentID, BotID: s.BotID, ChatID: s.ChatID, ThreadID: s.ThreadID}, Key: fmt.Sprintf("compact:%d:%d:%d:%d", s.ThreadID, s.MemoryRevision, s.FromID, s.ThroughID), Kind: "compact", Payload: payload, MaxAttempts: 3}); err != nil {
+			if _, err := q.Enqueue(ctx, queue.Input{Scope: chat.Scope{AgentID: s.AgentID, BotID: s.BotID, ChatID: s.ChatID}, Key: fmt.Sprintf("compact:0:%d:%d:%d", s.MemoryRevision, s.FromID, s.ThroughID), Kind: "compact", Payload: payload, MaxAttempts: 3}); err != nil {
 				return err
 			}
 		}
@@ -158,6 +159,7 @@ type Dashboard struct {
 	Tasks      []agent.Task         `json:"tasks"`
 	Deliveries []map[string]any     `json:"deliveries"`
 	Queue      []map[string]any     `json:"queue"`
+	Dead       []map[string]any     `json:"dead"`
 }
 
 func (a *AgentStore) Dashboard(ctx context.Context) (Dashboard, error) {
@@ -172,6 +174,7 @@ func (a *AgentStore) Dashboard(ctx context.Context) (Dashboard, error) {
 		{"SELECT * FROM scheduled_tasks ORDER BY run_at,id LIMIT 200", &result.Tasks},
 		{"SELECT d.job_id,d.part,d.state,d.message_id,d.text,j.agent_id,j.bot_id,j.chat_id FROM outbound_deliveries d JOIN queue_jobs j ON j.id=d.job_id ORDER BY d.job_id DESC,d.part LIMIT 100", &result.Deliveries},
 		{"SELECT status,COUNT(*) AS count FROM queue_jobs GROUP BY status", &result.Queue},
+		{"SELECT id,agent_id,bot_id,chat_id,thread_id,kind,attempts,max_attempts,updated_at FROM queue_jobs WHERE status='dead' ORDER BY id DESC LIMIT 50", &result.Dead},
 	}
 	for _, q := range queries {
 		if err := a.db.WithContext(ctx).Raw(q.sql).Scan(q.dest).Error; err != nil {

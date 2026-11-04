@@ -27,7 +27,28 @@ an existing key. Independent agents, bots and chats have independent deduplicati
 Queue state is `pending → leased → completed`, or `leased → retry → leased`, eventually `dead`.
 An expired lease can be reclaimed; an expired final attempt is retired in bounded batches during polling.
 Rows are retained, so deduplication survives completion. A retention policy must preserve dedupe markers
-for the required replay window; cleanup and administrative dead-letter replay are not implemented yet.
+for the required replay window; cleanup is not implemented yet.
+
+### Failure classes and dead jobs
+
+Handlers classify failures with `queue.Fail(class, terminal, err)` and annotate the phase with
+`queue.WithPhase`. The worker logs only the bounded class and phase (`llm_timeout`, `llm_429`,
+`llm_http_5xx`, `llm_truncated`, `llm_budget`, `embedding_timeout`, `quota`, `panic`, `job_timeout`,
+`handler_error`, …), never the error text, and exports `tgaia_queue_failures_total{kind,class}`.
+Terminal classes (model timeouts, truncated output, exceeded budgets, 4xx rejections) retire the job
+at once through `Store.Fail`: the same prompt would fail the same way on every retry. Other failures
+retry with backoff until `max_attempts`. A job-level deadline retries, because tool turns and results
+are checkpointed and the next attempt resumes from them.
+
+When a `respond` job becomes dead, the worker calls the registered `OnDead` hook once. The engine
+then sends a short reply to the originating message explaining that no answer is coming (timeout,
+truncated output, budget, generic error). The notice is best effort and outside the durable
+delivery protocol.
+
+Dead jobs are listed in the Web UI (Outgoing messages → Dead jobs) with a **Replay** action backed
+by `POST /api/queue-replay`. `Queue.Replay` resets a dead job to `pending` with a fresh attempt
+budget; tool-step checkpoints, cached results and delivery receipts remain, so replay resumes
+rather than repeats finished work.
 
 ## Concurrency and ordering
 
@@ -70,7 +91,7 @@ Default worker options (the runtime uses these defaults; configurable limits rem
 | Poll interval | 1 second |
 | Lease | 30 seconds |
 | Heartbeat | 10 seconds |
-| Task timeout | 2 minutes |
+| Task timeout | 12 minutes (`worker_timeout`; must exceed `tool_timeout` + `llm_timeout`) |
 | Shutdown timeout | 15 seconds |
 | Retry backoff | 1 second, doubling up to 1 minute |
 

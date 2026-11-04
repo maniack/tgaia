@@ -20,7 +20,7 @@ import (
 )
 
 func queueDatabases(t *testing.T, driver config.Driver) (*Database, *Database) {
-	return databasesAtVersion(t, driver, 17)
+	return databasesAtVersion(t, driver, 18)
 }
 func databasesAtVersion(t *testing.T, driver config.Driver, version int) (*Database, *Database) {
 	t.Helper()
@@ -165,6 +165,40 @@ func TestQueueConformance(t *testing.T) {
 				next := claim(t, other.Queue())
 				if next.ID == first.ID {
 					t.Fatal("exhausted crashed job not retired")
+				}
+			})
+			t.Run("terminal failure and replay", func(t *testing.T) {
+				db, _ := queueDatabases(t, driver)
+				q := db.Queue()
+				ctx := context.Background()
+				enqueue(t, q, 1, "a", 3)
+				first := claim(t, q)
+				if first.MaxAttempts != 3 || first.Attempt != 1 || first.Exhausted() {
+					t.Fatalf("attempt budget not reported: %+v", first)
+				}
+				if err := q.Fail(ctx, first.Receipt); err != nil {
+					t.Fatal(err)
+				}
+				if next, err := q.Claim(ctx, []string{"test"}, time.Minute); err != nil || next != nil {
+					t.Fatal("failed job remained claimable")
+				}
+				var status string
+				db.orm.Raw("SELECT status FROM queue_jobs WHERE id=?", first.ID).Scan(&status)
+				if status != "dead" {
+					t.Fatalf("Fail did not retire the job: %s", status)
+				}
+				if err := q.Replay(ctx, first.ID+100); !errors.Is(err, ErrNotDead) {
+					t.Fatal("replaying an unknown job must fail", err)
+				}
+				if err := q.Replay(ctx, first.ID); err != nil {
+					t.Fatal(err)
+				}
+				if err := q.Replay(ctx, first.ID); !errors.Is(err, ErrNotDead) {
+					t.Fatal("replay must apply once")
+				}
+				again := claim(t, q)
+				if again.ID != first.ID || again.Attempt != 1 || again.Token == first.Token {
+					t.Fatalf("replayed job not reclaimable with a fresh budget: %+v", again)
 				}
 			})
 			t.Run("multiple consumers", func(t *testing.T) {

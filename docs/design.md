@@ -145,7 +145,7 @@ Each Telegram bot has its own context and memory in each chat. Two bots of the s
 - Shared entries have IDs, versions, authors and UTC timestamps. Changes check the expected version and invalidate affected caches/search views. Never automatically copy private data into this layer available to all permitted chats.
 - Scheduled tasks retain chat scope and response destination. Execution/retries use that scope's memory plus shared knowledge; prompts/tool arguments cannot choose another chat.
 - Deleting one chat's memory must not affect other chats or shared knowledge. Define coordinated retention for history, summaries and indexes; deleted data must not reappear from stale caches.
-- Topic-level isolation within forum groups remains undecided; baseline scope is the entire chat. Channel context requirements do not automatically define channel ingestion/publication behavior.
+- Memory scope within forum groups is the entire chat (decided 2026-11-04, migration 018): history, the compaction summary and explicit memories are shared by all topics; replies, reply links and scheduled tasks keep their topic. Channel context requirements do not automatically define channel ingestion/publication behavior.
 
 ### 6.2. Background memory compaction
 

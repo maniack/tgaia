@@ -15,7 +15,7 @@ import (
 func TestAdminPaginationAndResolution(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, peer := databasesAtVersion(t, driver, 17)
+			db, peer := databasesAtVersion(t, driver, 18)
 			ctx := context.Background()
 			sc := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			for i := int64(1); i <= 125; i++ {

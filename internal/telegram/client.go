@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -165,11 +166,14 @@ func (c *Client) call(ctx context.Context, method string, body any, dest any) er
 	if err != nil {
 		return errors.New("invalid Telegram request")
 	}
+	return c.callRaw(ctx, method, "application/json", data, dest)
+}
+func (c *Client) callRaw(ctx context.Context, method, contentType string, data []byte, dest any) error {
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.telegram.org/bot"+c.token.Reveal()+"/"+method, bytes.NewReader(data))
 	if err != nil {
 		return errors.New("invalid Telegram endpoint")
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	response, err := c.http.Do(req)
 	if err != nil {
 		return errors.New("Telegram request failed; outcome may be unknown")
@@ -190,6 +194,11 @@ func (c *Client) call(ctx context.Context, method string, body any, dest any) er
 	// These two responses confirm an idempotent retry's intended state.
 	if response.StatusCode == 400 && ((method == "editMessageText" && strings.HasPrefix(envelope.Description, "Bad Request: message is not modified")) || (method == "deleteMessage" && envelope.Description == "Bad Request: message to delete not found")) {
 		return nil
+	}
+	if response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != 429 {
+		// A definite refusal: nothing was sent, so a caller may safely try another
+		// delivery form. The description is not surfaced; it can echo input.
+		return rejectedError{fmt.Errorf("Telegram API rejected the request (HTTP %d)", response.StatusCode)}
 	}
 	if response.StatusCode != 200 || !envelope.OK {
 		return fmt.Errorf("Telegram API did not confirm success (HTTP %d)", response.StatusCode)
@@ -222,6 +231,66 @@ func (c *Client) SendTopic(ctx context.Context, chatID, threadID int64, text str
 	}
 	return m.ID, time.Unix(m.Date, 0).UTC(), nil
 }
+
+// rejectedError marks a 4xx Bot API answer; see service.Rejected.
+type rejectedError struct{ error }
+
+func (rejectedError) Rejected() bool  { return true }
+func (e rejectedError) Unwrap() error { return e.error }
+
+// SendReply posts a short message quoting the user's original message. It is
+// used for failure notices, so the user sees which request could not be served.
+func (c *Client) SendReply(ctx context.Context, chatID, threadID, replyTo int64, text string) (int64, time.Time, error) {
+	var m Message
+	body := map[string]any{"chat_id": chatID, "text": markdownToTelegramHTML(text), "parse_mode": "HTML"}
+	if threadID > 0 {
+		body["message_thread_id"] = threadID
+	}
+	if replyTo > 0 {
+		body["reply_parameters"] = map[string]any{"message_id": replyTo, "allow_sending_without_reply": true}
+	}
+	if err := c.call(ctx, "sendMessage", body, &m); err != nil {
+		return 0, time.Time{}, err
+	}
+	return m.ID, time.Unix(m.Date, 0).UTC(), nil
+}
+
+// SendDocument uploads one file through multipart/form-data. The caption is
+// Markdown rendered to Telegram HTML like ordinary messages.
+func (c *Client) SendDocument(ctx context.Context, chatID, threadID int64, name string, data []byte, caption string) (int64, time.Time, error) {
+	if name == "" || len(name) > 128 || strings.ContainsAny(name, `/\`+"\x00") || len(data) == 0 || len(data) > 50<<20 {
+		return 0, time.Time{}, errors.New("invalid document")
+	}
+	var buffer bytes.Buffer
+	form := multipart.NewWriter(&buffer)
+	_ = form.WriteField("chat_id", strconv.FormatInt(chatID, 10))
+	if threadID > 0 {
+		_ = form.WriteField("message_thread_id", strconv.FormatInt(threadID, 10))
+	}
+	if strings.TrimSpace(caption) != "" {
+		_ = form.WriteField("caption", markdownToTelegramHTML(caption))
+		_ = form.WriteField("parse_mode", "HTML")
+	}
+	part, err := form.CreateFormFile("document", name)
+	if err != nil {
+		return 0, time.Time{}, errors.New("invalid document upload")
+	}
+	if _, err := part.Write(data); err != nil {
+		return 0, time.Time{}, errors.New("invalid document upload")
+	}
+	if err := form.Close(); err != nil {
+		return 0, time.Time{}, errors.New("invalid document upload")
+	}
+	var m Message
+	if err := c.callRaw(ctx, "sendDocument", form.FormDataContentType(), buffer.Bytes(), &m); err != nil {
+		return 0, time.Time{}, err
+	}
+	if m.ID <= 0 {
+		return 0, time.Time{}, errors.New("Telegram returned no message ID")
+	}
+	return m.ID, time.Unix(m.Date, 0).UTC(), nil
+}
+
 func (c *Client) Edit(ctx context.Context, chatID, messageID int64, text string) error {
 	return c.call(ctx, "editMessageText", map[string]any{"chat_id": chatID, "message_id": messageID, "text": markdownToTelegramHTML(text), "parse_mode": "HTML"}, nil)
 }

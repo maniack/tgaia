@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/maniack/tgaia/internal/config"
+	"github.com/maniack/tgaia/internal/queue"
 	"go.opentelemetry.io/otel"
 )
 
@@ -37,7 +38,9 @@ func NewEmbedder(endpoint, model string, key config.Secret, cfg config.App) (*Em
 		path += "/v1"
 	}
 	u.Path = path + "/embeddings"
-	return &Embedder{inputBytes: cfg.Limit("llm_input_bytes"), endpoint: u.String(), model: model, key: key, http: &http.Client{Timeout: cfg.Duration("llm_timeout"), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, slots: make(chan struct{}, cfg.Limit("llm_concurrency"))}, nil
+	// Embeddings are short requests on a separate model; a generous chat
+	// ceiling must not keep a hung embedding endpoint occupied for minutes.
+	return &Embedder{inputBytes: cfg.Limit("llm_input_bytes"), endpoint: u.String(), model: model, key: key, http: &http.Client{Timeout: cfg.Duration("embedding_timeout"), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, slots: make(chan struct{}, cfg.Limit("llm_concurrency"))}, nil
 }
 
 func (e *Embedder) Model() string { return e.model }
@@ -68,11 +71,18 @@ func (e *Embedder) Embed(ctx context.Context, input string) ([]float32, error) {
 	}
 	response, err := e.http.Do(request)
 	if err != nil {
-		return nil, errors.New("embedding request failed")
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		var netErr interface{ Timeout() bool }
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return nil, queue.Fail("embedding_timeout", false, errors.New("embedding request timed out"))
+		}
+		return nil, queue.Fail("embedding_failed", false, errors.New("embedding request failed"))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, errors.New("embedding endpoint returned unsuccessful status")
+		return nil, queue.Fail("embedding_failed", response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != http.StatusTooManyRequests, errors.New("embedding endpoint returned unsuccessful status"))
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20+1))
 	if err != nil || len(data) > 4<<20 {
