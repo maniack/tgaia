@@ -1,0 +1,20 @@
+# Optional: choose the class, DNS name and TLS Secret for your cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tgaia
+spec:
+  ingressClassName: REPLACE_INGRESS_CLASS
+  tls:
+    - hosts: [assistant.example.invalid]
+      secretName: tgaia-tls
+  rules:
+    - host: assistant.example.invalid
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: tgaia-api
+                port: {name: http}

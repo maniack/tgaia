@@ -1,0 +1,182 @@
+# Complete tgaia configuration example. Copy it to an ignored config.yaml and
+# replace placeholders as needed. Every YAML leaf must remain a string, including
+# booleans, numbers, JSON arrays and JSON objects.
+
+database:
+  # sqlite for a local single-node database; postgres for production/replicas.
+  # Production example: driver: postgres
+  driver: sqlite
+  # SQLite file path, or a postgres:// URL including database and TLS parameters.
+  # Production example: postgres://USER:PASSWORD@db.example:5432/tgaia?sslmode=verify-full
+  dsn: tgaia.db
+
+# debug, info, warn or error.
+log_level: info
+# Maximum time allowed for the initial database connection.
+connect_timeout: 5s
+
+app:
+  # Stable logical agent identifier stored with all persistent records.
+  agent_id: main
+  # HTTP bind address. Mock components require a loopback address.
+  # Containers commonly use 0.0.0.0:8080 with all mocks disabled.
+  listen: 127.0.0.1:8080
+  # Browser-visible base URL without a path; it determines the OIDC callback URL.
+  # Production example: https://assistant.example.invalid
+  public_url: http://127.0.0.1:8080
+  # all runs API and workers together; production may use separate api/worker replicas.
+  role: all
+
+  observability:
+    # OTLP/HTTP trace endpoint. Empty disables trace export.
+    otlp_endpoint: ""
+
+  llm:
+    # OpenAI-compatible provider base URL. Required when mock is false.
+    # Production example: https://litellm.example.invalid
+    endpoint: ""
+    # Provider model/router name. Required when mock is false.
+    model: ""
+    # Provider API key. Keep populated values only in ignored files or a secret store.
+    api_key: ""
+    # true uses the deterministic local mock; mocks are loopback-only.
+    mock: "true"
+
+  oidc:
+    # mock for loopback development; oidc for a real OpenID Connect provider.
+    mode: mock
+    # Exact issuer URL used for discovery. Required in oidc mode.
+    # Keycloak example: https://auth.example.invalid/realms/example
+    issuer: ""
+    # OIDC client ID. It is required in both real and mock modes.
+    client_id: tgaia
+    # Confidential-client secret. Empty is suitable only for the local mock.
+    client_secret: ""
+    # Persistent random secret of at least 32 characters for signed sessions and
+    # encrypted DB settings. Preserve it together with database backups.
+    session_key: REPLACE-WITH-A-PERSISTENT-RANDOM-SECRET-AT-LEAST-32-CHARS
+    # Comma-separated exact values accepted from the ID-token `groups` claim.
+    # The local mock issues local-admins; production requires the provider's mapper.
+    admin_groups: local-admins
+
+  telegram:
+    # mock, polling or webhook. Mock mode is permitted only on loopback.
+    # Polling needs no inbound Telegram route; webhook requires HTTPS ingress.
+    mode: mock
+    bots:
+      # Configuration alias used by MCP allowlists; it is not the Telegram username.
+      assistant:
+        # Positive synthetic ID is required in mock mode; real modes resolve it via getMe.
+        id: "1"
+        # Synthetic username for mock mode; real modes resolve it via getMe.
+        username: assistant_bot
+        # Complete BotFather ID:secret token, required in polling/webhook modes.
+        token: ""
+        # At least 16 characters in webhook mode; must match Telegram secret_token.
+        webhook_secret: ""
+
+  memory:
+    # Age of messages eligible for background conversation compaction.
+    window: 1h
+    # Scheduler/compaction scan interval.
+    interval: 30s
+
+  limits:
+    # Maximum duration of one remote or stdio MCP invocation.
+    mcp_call_timeout: 20s
+    # Maximum retained bytes from one MCP result.
+    mcp_result_bytes: "16000"
+    # Telegram HTTP timeout; polling requires a value greater than 30 seconds.
+    telegram_timeout: 35s
+    # Maximum downloaded image size.
+    image_bytes: "8388608"
+    # Maximum downloaded text-document size.
+    document_bytes: "262144"
+    # Number of concurrent queue handlers per worker group.
+    worker_concurrency: "4"
+    # Delay between empty queue polls.
+    worker_poll: 1s
+    # Duration of a claimed queue-job lease.
+    worker_lease: 30s
+    # Lease-renewal interval; it must not exceed one third of worker_lease.
+    worker_heartbeat: 10s
+    # Maximum duration of one queue-job attempt.
+    worker_timeout: 2m
+    # Grace period for worker shutdown.
+    worker_shutdown: 15s
+    # Initial retry backoff.
+    retry_base: 1s
+    # Maximum retry backoff; it must be at least retry_base.
+    retry_max: 1m
+    # Maximum simultaneous LLM requests per process.
+    llm_concurrency: "4"
+    # Timeout for one LLM request.
+    llm_timeout: 110s
+    # Hard byte ceiling for assembled LLM input.
+    llm_input_bytes: "128000"
+    # Requested maximum output tokens.
+    llm_output_tokens: "2048"
+    # Maximum recent messages considered for a reply.
+    reply_messages: "30"
+    # Reply context byte budget; it must be below llm_input_bytes.
+    reply_context_bytes: "100000"
+    # Maximum messages considered in one compaction pass.
+    compaction_messages: "100"
+    # Compaction input byte budget; it must be below llm_input_bytes.
+    compaction_input_bytes: "90000"
+    # Requested maximum tokens for a generated summary.
+    compaction_output_tokens: "2048"
+    # Overall timeout for the model/tool phase of a job.
+    tool_timeout: 75s
+    # Maximum model/tool interaction rounds.
+    tool_rounds: "4"
+    # Maximum tool calls in one job.
+    tool_calls: "8"
+    # Tool-aware context byte budget; it must be below llm_input_bytes.
+    tool_context_bytes: "118000"
+    # Maximum media-bearing messages included in one request.
+    media_messages: "4"
+    # Per-chat fixed-UTC-hour LLM call quota; 0 disables the quota.
+    llm_calls_per_chat_hour: "0"
+    # Per-chat fixed-UTC-hour compaction call quota; 0 disables the quota.
+    compaction_calls_per_chat_hour: "0"
+    # Active scheduled-task quota per user; 0 disables the quota.
+    active_tasks_per_user: "0"
+
+  mcp:
+    servers:
+      # Disabled remote example. Delete it if no remote MCP server is needed.
+      remote_example:
+        # true makes the server available after all validation/allowlist checks.
+        enabled: "false"
+        # http is Streamable HTTP; sse selects the legacy SSE transport.
+        transport: http
+        # Absolute endpoint without embedded credentials, query or fragment.
+        url: https://mcp.example.invalid/mcp
+        # Bearer token for the remote endpoint.
+        token: ""
+        # Remote transports must leave command and args empty.
+        command: ""
+        args: "[]"
+        # Remote transports do not use a subprocess environment.
+        env: "{}"
+        # JSON array of allowed configuration aliases; ["*"] grants every bot.
+        bots: '["assistant"]'
+        # JSON array of exposed tool names; ["*"] grants every discovered tool.
+        tools: '["search"]'
+      # Disabled local-process example. The child inherits only the supplied env.
+      stdio_example:
+        enabled: "false"
+        # stdio starts an administrator-installed executable without a shell.
+        transport: stdio
+        # stdio must leave URL and token empty.
+        url: ""
+        token: ""
+        # Absolute executable path present on every worker host/container.
+        command: /usr/local/bin/my-mcp-server
+        # JSON array passed directly as argv.
+        args: '["--stdio"]'
+        # JSON object forming the complete child environment; secrets belong in ignored config.
+        env: '{}'
+        bots: '["assistant"]'
+        tools: '["lookup"]'

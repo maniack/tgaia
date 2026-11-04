@@ -1,0 +1,1 @@
+{"type":"object","additionalProperties":false,"properties":{"reply":{"type":"string"},"schedule":{"type":"null"}},"required":["reply","schedule"]}

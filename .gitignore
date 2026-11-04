@@ -1,0 +1,16 @@
+/bin/
+/config.yaml
+*.db
+*.db-shm
+*.db-wal
+.remember/
+/data/
+.idea/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+coverage.out
+coverage.html

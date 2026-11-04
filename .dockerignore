@@ -1,0 +1,19 @@
+data
+.git
+.github
+.idea
+.remember
+bin
+*.db
+*.db-shm
+*.db-wal
+config.yaml
+.env
+.env.*
+*.pem
+*.key
+coverage.out
+coverage.html
+
+# Public configuration/prompt templates are not needed in the image build context.
+config/

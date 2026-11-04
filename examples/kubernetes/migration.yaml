@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tgaia-migrate
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: migrate
+          image: tgaia:replace-me
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/tgaia/config.yaml", "db-migrate"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/tgaia, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: tgaia-config
+                  items: [{key: config.yaml, path: config.yaml}]
+              - configMap:
+                  name: tgaia-prompt
+                  items: [{key: system-prompt.md, path: system-prompt.md}]
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
