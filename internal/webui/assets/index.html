@@ -1,11 +1,252 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>tgaia · Agent workspace</title><link rel="stylesheet" href="/assets/style.css"><script src="/assets/app.js" defer></script></head><body>
-<aside><a class="brand" href="/">tgaia<span>Agent workspace</span></a><div id="mode" class="mode">Connecting…</div><nav aria-label="Workspace"><button data-tab="conversations" class="selected">Conversations</button><button data-tab="tasks">Scheduled tasks</button><button data-tab="people">People & access</button><button data-tab="knowledge">Shared knowledge</button><button data-tab="mcp">MCP tools</button><button data-tab="settings">Settings</button><button data-tab="audit">Audit</button></nav><div class="sidebar-note">Separate memory.<br>One place to manage it.</div><div id="identity"></div></aside>
-<main><header><div><h1 id="heading">Conversations</h1><p id="subtitle">Choose a bot and chat to inspect its own context.</p></div><button id="refresh" class="quiet">Refresh</button></header><p id="runtime-status" role="status" aria-live="polite">Checking runtime settings…</p><div id="notice" role="status" aria-live="polite"></div>
-<form id="resolution-form" hidden><h2 id="resolution-title">Resolve outcome</h2><p>Record a verified outcome or close without confirming success. This decision cannot be overwritten. The uncertain operation will not be repeated; remaining response parts may resume.</p><label>Decision<select id="resolution-action"><option value="dismiss">Close without confirming success</option><option value="confirm">Confirm externally verified result</option></select></label><label>Reason and evidence<textarea id="resolution-reason" required maxlength="2000"></textarea></label><div id="resolution-delivery" hidden><label>Verified Telegram message ID<input id="resolution-message" type="number" min="1"></label><label>Actual send time, including timezone<input id="resolution-time" placeholder="2026-11-04T01:00:00Z"></label></div><div id="resolution-tool" hidden><label>Verified tool result (JSON)<textarea id="resolution-result" maxlength="32000"></textarea></label></div><label class="inline"><input id="resolution-ack" type="checkbox" required>I checked the external outcome and understand this does not retry the operation.</label><button>Record resolution</button><button type="button" id="resolution-cancel" class="quiet">Cancel</button></form>
-<section id="conversations" class="view"><div class="split"><div><h2>Chats</h2><div id="chat-list" class="chat-list"></div><form id="demo-form" hidden><h3>Send a local test event</h3><label>Bot<select id="demo-bot"></select></label><div class="fields"><label>Chat ID<input id="demo-chat" type="number" value="101" required></label><label>User ID<input id="demo-user" type="number" value="501" required min="1"></label></div><label>Message<textarea id="demo-text" rows="3" required placeholder="Напомни через минуту проверить результат"></textarea></label><button>Send through queue</button><p class="help">Local events only. Nothing is sent to a real Telegram chat.</p></form></div><article><div id="scope-heading" class="scope-heading">Select a conversation</div><div class="memory"><h3>Memory summary</h3><p id="summary">The summary for the selected bot and chat will appear here.</p></div><div id="history" class="history"></div><details id="prompt-panel" hidden><summary>System prompt for this bot</summary><form id="prompt-form"><textarea id="bot-prompt" rows="7" aria-label="Bot system prompt"></textarea><button>Save bot prompt</button><p class="help">Applies to this bot's next job. Other bots keep their own prompts.</p></form></details></article></div><h2>Outgoing messages</h2><div class="table-scroll"><table><thead><tr><th>Bot / chat</th><th>Message</th><th>Delivery</th></tr></thead><tbody id="deliveries"></tbody></table></div><h2>Tool outcomes</h2><p>Resolve unknown outcomes only after checking the external system. Calls are never retried automatically.</p><div class="table-scroll"><table><thead><tr><th>Scope</th><th>Request</th><th>Result</th><th>Outcome</th></tr></thead><tbody id="tool-outcomes"></tbody></table></div></section>
-<section id="tasks" class="view" hidden><div class="section-head"><h2>All scheduled tasks</h2><button id="new-task">Create task</button></div><div class="table-scroll"><table><thead><tr><th>Task prompt</th><th>Bot / chat / author</th><th>Next run</th><th>Status</th><th>Actions</th></tr></thead><tbody id="task-list"></tbody></table></div><form id="task-form" hidden><h2 id="task-form-title">Create task</h2><input id="task-id" type="hidden"><input id="task-version" type="hidden"><label>Conversation<select id="task-scope" required></select></label><label>Author user ID<input id="task-user" type="number" required min="1"></label><label>Prompt<textarea id="task-prompt" rows="4" required maxlength="16000"></textarea></label><div class="fields"><label>Next run (your local time)<input id="task-at" type="datetime-local" required></label><label>Repeat every, minutes (0 = once)<input id="task-interval" type="number" min="0" value="0"></label></div><label class="inline"><input id="task-active" type="checkbox" checked> Enabled</label><button>Save task</button><button type="button" id="task-cancel" class="quiet">Cancel</button></form></section>
-<section id="audit" class="view" hidden><h2>Administrative audit</h2><p>Successful changes are committed with their audit record. Credentials are redacted.</p><div class="table-scroll"><table><thead><tr><th>Time / group</th><th>Operation / status</th><th>Changes</th></tr></thead><tbody id="audit-list"></tbody></table></div></section><section id="people" class="view" hidden><h2>People observed by the agent</h2><p>Reader: replies only. User: replies, own tasks and allowed tools. Roles and user blocks apply across every bot and chat of the agent. Downgrading or blocking pauses tasks and retires queued work; restoring access does not replay it.</p><div class="table-scroll"><table><thead><tr><th>Person</th><th>User ID</th><th>Agent</th><th>Role</th><th>Block</th></tr></thead><tbody id="user-list"></tbody></table></div></section>
-<section id="knowledge" class="view" hidden><form id="knowledge-form"><h2>Administrator knowledge</h2><p>This is the explicit shared layer. Bots never publish their chat memory here.</p><label>Agent<select id="knowledge-agent"></select></label><label>Knowledge<textarea id="knowledge-text" rows="14" maxlength="16000"></textarea></label><button>Save knowledge</button></form></section>
-<section id="mcp" class="view" hidden><div class="section-head"><h2>MCP servers</h2><label>Settings scope <select id="mcp-scope"><option value="shared">Shared</option><option value="worker">Worker replicas</option></select></label><button id="new-mcp">Add server</button></div><p>Connect remote HTTP/SSE servers or local stdio processes. Changes override the config file and apply automatically to running replicas. Empty allowlists deny access.</p><p id="mcp-source"></p><button id="mcp-reset" class="quiet" hidden>Reset to configuration file</button><div class="table-scroll"><table><thead><tr><th>Server</th><th>Access</th><th>Status</th><th>Actions</th></tr></thead><tbody id="mcp-list"></tbody></table></div><pre id="mcp-discovery" class="discovery" hidden></pre><form id="mcp-form" hidden><h2 id="mcp-form-title">Add MCP server</h2><label>Server name<input id="mcp-name" required pattern="[a-zA-Z][a-zA-Z0-9_-]{0,39}" maxlength="40"></label><label>Transport<select id="mcp-transport"><option value="http">Streamable HTTP</option><option value="sse">SSE (legacy)</option><option value="stdio">Local stdio</option></select></label><div id="mcp-remote"><label>Server URL<input id="mcp-url" type="url" placeholder="https://mcp.example.com/mcp"></label><label>Bearer token<input id="mcp-token" type="password" autocomplete="off" placeholder="Leave blank to keep saved token"></label><label class="inline"><input id="mcp-clear-token" type="checkbox">Clear saved token</label></div><div id="mcp-local" hidden><label>Executable (absolute path)<input id="mcp-command" placeholder="/usr/local/bin/my-mcp-server"></label><label>Arguments (JSON array)<textarea id="mcp-args" rows="2" placeholder='["--stdio"]'></textarea></label><label>Environment (JSON object, secret)<textarea id="mcp-env" rows="3" placeholder='{"API_KEY":"..."}'></textarea></label><p class="help">Environment is not inherited from the agent. Blank keeps saved values; {} clears them. Use this field for credentials, not arguments.</p></div><label>Allowed bot aliases (comma-separated, * = all)<input id="mcp-bots" placeholder="assistant"></label><p id="mcp-bot-hint" class="help"></p><label>Allowed tool names (comma-separated, * = all)<input id="mcp-tools" placeholder="search, get_document"></label><p class="help">Allowing a tool authorizes its calls, including changes it can make. Use Discover tools to inspect names before enabling access.</p><label class="inline"><input id="mcp-enabled" type="checkbox">Enabled</label><button>Save MCP server</button><button id="mcp-cancel" type="button" class="quiet">Cancel</button></form></section>
-<section id="settings" class="view" hidden><h2>Runtime settings</h2><label>Settings scope <select id="settings-scope"><option value="shared">Shared</option><option value="api">API replicas</option><option value="worker">Worker replicas</option></select></label><p>Database values override configuration. Changes apply automatically without restarting. Database connection and OIDC remain in the bootstrap file. Listener, public URL and process role are managed outside this editor.</p><div class="table-scroll"><table><thead><tr><th>Setting</th><th>Resolved value</th><th>Database override</th><th>Actions</th></tr></thead><tbody id="settings-list"></tbody></table></div></section>
-<footer><span id="queue-status"></span><span>Scoped by agent, bot and chat</span></footer></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>tgaia · Agent workspace</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/app.js" defer></script>
+</head>
+<body>
+<svg hidden aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-bubble" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4A2.5 2.5 0 0 1 4 13.5z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="16.5" cy="9" r="2.5"/><path d="M15.2 14.4a4.5 4.5 0 0 1 5.3 4.6"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6.5A2.5 2.5 0 0 0 9.5 4H4v14h6a2 2 0 0 1 2 2m0-13.5A2.5 2.5 0 0 1 14.5 4H20v14h-6a2 2 0 0 0-2 2m0-13.5V20"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M18 7h2M4 12h2M10 12h10M4 17h11M19 17h1"/><circle cx="15.5" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="17" cy="17" r="2"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v4h4M10 12h5M10 16h5"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.05-4.95M19 4v4h-4"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-3.6-3.6"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9 4.5a3 3 0 0 0-3 3v.6A3 3 0 0 0 4.5 11a3 3 0 0 0 1.2 4.1A3 3 0 0 0 9 19.5h3V4.5zm6 0a3 3 0 0 1 3 3v.6a3 3 0 0 1 1.5 2.9 3 3 0 0 1-1.2 4.1A3 3 0 0 1 15 19.5h-3V4.5z"/></symbol>
+  <symbol id="i-paperplane" viewBox="0 0 24 24"><path d="M20 4L4 10.5l7 2.5 2.5 7z M20 4l-9 9"/></symbol>
+</svg>
+
+<div class="shell">
+<aside class="sidebar">
+  <a class="brand" href="/"><span class="brand-mark"><svg class="icon"><use href="#i-bubble"/></svg></span><span><span class="brand-name">tgaia</span><span class="brand-sub">Agent workspace</span></span></a>
+  <nav class="primary" aria-label="Workspace">
+    <button data-tab="conversations" class="selected"><svg class="icon"><use href="#i-bubble"/></svg><span data-short="Chats">Conversations</span></button>
+    <button data-tab="tasks"><svg class="icon"><use href="#i-clock"/></svg><span data-short="Tasks">Scheduled tasks</span></button>
+    <button data-tab="people"><svg class="icon"><use href="#i-people"/></svg><span data-short="People">People &amp; access</span></button>
+    <button data-tab="knowledge"><svg class="icon"><use href="#i-book"/></svg><span data-short="Knowledge">Shared knowledge</span></button>
+    <button data-tab="mcp"><svg class="icon"><use href="#i-plug"/></svg><span data-short="MCP">MCP tools</span></button>
+    <button data-tab="settings"><svg class="icon"><use href="#i-sliders"/></svg><span data-short="Settings">Settings</span></button>
+    <button data-tab="audit"><svg class="icon"><use href="#i-doc"/></svg><span data-short="Audit">Audit</span></button>
+  </nav>
+  <div class="sidebar-foot">
+    <div id="mode" class="mode" aria-label="Runtime mode"><span class="pill">Connecting…</span></div>
+    <div id="identity"></div>
+  </div>
+</aside>
+
+<main>
+<header class="toolbar">
+  <div class="titles"><h1 id="heading">Conversations</h1><p id="subtitle">Choose a bot and chat to inspect its own context.</p></div>
+  <div class="tools"><span id="runtime-status" role="status" aria-live="polite">Checking runtime settings…</span><button id="refresh" class="quiet" title="Refresh (R)"><svg class="icon"><use href="#i-refresh"/></svg>Refresh</button></div>
+</header>
+<div id="notice" role="status" aria-live="polite"></div>
+
+<div class="content">
+
+<section id="conversations" class="view">
+  <div class="split">
+    <div class="chats-pane">
+      <div class="pane-head">
+        <div class="inline"><h2>Chats</h2><button id="demo-open" class="plain" hidden title="Send a local test event"><svg class="icon"><use href="#i-paperplane"/></svg>Test event</button></div>
+        <div class="search"><svg class="icon"><use href="#i-search"/></svg><input id="chat-search" type="search" placeholder="Filter chats" aria-label="Filter chats" autocomplete="off"></div>
+      </div>
+      <div id="chat-list" class="chat-list"></div>
+    </div>
+    <article class="transcript">
+      <div class="scope-head"><div id="scope-heading" class="scope-heading">Select a conversation</div><div id="scope-actions" class="actions"></div></div>
+      <div class="transcript-body">
+        <div class="memory"><svg class="icon"><use href="#i-brain"/></svg><div><h3>Memory summary</h3><p id="summary">The summary for the selected bot and chat will appear here.</p></div></div>
+        <div id="history" class="history"></div>
+        <details id="prompt-panel" class="prompt" hidden><summary>System prompt for this bot</summary>
+          <form id="prompt-form"><textarea id="bot-prompt" rows="7" aria-label="Bot system prompt"></textarea><div class="actions"><span class="help">Applies to this bot's next job. Other bots keep their own prompts.</span><button>Save prompt</button></div></form>
+        </details>
+      </div>
+    </article>
+  </div>
+
+  <div>
+    <div class="section-head"><h2>Outgoing messages</h2></div>
+    <div class="table-scroll"><table><thead><tr><th>Bot / chat</th><th>Message</th><th>Delivery</th></tr></thead><tbody id="deliveries"></tbody></table></div>
+  </div>
+
+  <div>
+    <div class="section-head"><h2>Tool outcomes</h2></div>
+    <p class="section-lead">Resolve unknown outcomes only after checking the external system. Calls are never retried automatically.</p>
+    <div class="table-scroll"><table><thead><tr><th>Scope</th><th>Request</th><th>Result</th><th>Outcome</th></tr></thead><tbody id="tool-outcomes"></tbody></table></div>
+  </div>
+</section>
+
+<section id="tasks" class="view" hidden>
+  <div>
+    <div class="section-head"><h2>All scheduled tasks</h2><div class="controls"><button id="new-task"><svg class="icon"><use href="#i-plus"/></svg>New task</button></div></div>
+    <div class="table-scroll"><table><thead><tr><th>Task prompt</th><th>Bot / chat / author</th><th>Next run</th><th>Status</th><th></th></tr></thead><tbody id="task-list"></tbody></table></div>
+  </div>
+</section>
+
+<section id="audit" class="view" hidden>
+  <div>
+    <div class="section-head"><h2>Administrative audit</h2></div>
+    <p class="section-lead">Successful changes are committed with their audit record. Credentials are redacted.</p>
+    <div class="table-scroll"><table><thead><tr><th>Time / group</th><th>Operation / status</th><th>Changes</th></tr></thead><tbody id="audit-list"></tbody></table></div>
+  </div>
+</section>
+
+<section id="people" class="view" hidden>
+  <div>
+    <div class="section-head"><h2>People observed by the agent</h2></div>
+    <p class="section-lead">Reader: replies only. User: replies, own tasks and allowed tools. Roles and user blocks apply across every bot and chat of the agent. Downgrading or blocking pauses tasks and retires queued work; restoring access does not replay it.</p>
+    <div class="table-scroll"><table><thead><tr><th>Person</th><th>User ID</th><th>Agent</th><th>Role</th><th>Block</th></tr></thead><tbody id="user-list"></tbody></table></div>
+  </div>
+</section>
+
+<section id="knowledge" class="view" hidden>
+  <form id="knowledge-form">
+    <div class="section-head"><h2>Administrator knowledge</h2><div class="controls"><label>Agent <span class="select"><select id="knowledge-agent"></select></span></label></div></div>
+    <p class="section-lead">This is the explicit shared layer. Bots never publish their chat memory here.</p>
+    <div class="card"><div class="card-body"><textarea id="knowledge-text" rows="16" maxlength="16000" aria-label="Shared knowledge" placeholder="Facts, policies and context every bot of this agent should know."></textarea></div></div>
+    <div class="sheet-actions"><button>Save knowledge</button></div>
+  </form>
+</section>
+
+<section id="mcp" class="view" hidden>
+  <div>
+    <div class="section-head"><h2>MCP servers</h2><div class="controls"><label>Scope <span class="select"><select id="mcp-scope"><option value="shared">Shared</option><option value="worker">Worker replicas</option></select></span></label><button id="mcp-reset" class="quiet" hidden>Reset to configuration file</button><button id="new-mcp"><svg class="icon"><use href="#i-plus"/></svg>Add server</button></div></div>
+    <p class="section-lead">Connect remote HTTP/SSE servers or local stdio processes. Changes override the config file and apply automatically to running replicas. Empty allowlists deny access.</p>
+    <p id="mcp-source" class="section-lead"></p>
+    <div class="table-scroll"><table><thead><tr><th>Server</th><th>Access</th><th>Status</th><th></th></tr></thead><tbody id="mcp-list"></tbody></table></div>
+  </div>
+  <div id="mcp-discovery-wrap" hidden><div class="section-head"><h2>Discovered tools</h2><div class="controls"><button id="mcp-discovery-close" class="quiet">Hide</button></div></div><pre id="mcp-discovery" class="discovery"></pre></div>
+</section>
+
+<section id="settings" class="view" hidden>
+  <div>
+    <div class="section-head"><h2>Runtime settings</h2><div class="controls"><label>Scope <span class="select"><select id="settings-scope"><option value="shared">Shared</option><option value="api">API replicas</option><option value="worker">Worker replicas</option></select></span></label></div></div>
+    <p class="section-lead">Database values override configuration and apply without restarting. Database connection, OIDC, listener, public URL and process role are managed outside this editor.</p>
+    <div class="settings-toolbar"><div class="search"><svg class="icon"><use href="#i-search"/></svg><input id="settings-search" type="search" placeholder="Search settings" aria-label="Search settings" autocomplete="off"></div></div>
+  </div>
+  <div id="settings-list"></div>
+</section>
+
+</div>
+
+<footer><span id="queue-status"></span><span>Scoped by agent, bot and chat</span></footer>
+</main>
+</div>
+
+<!-- Sheets -->
+<dialog id="task-sheet" class="sheet" aria-labelledby="task-form-title">
+  <form id="task-form">
+    <div class="sheet-head"><h2 id="task-form-title">New task</h2><button type="button" id="task-cancel" class="sheet-close" aria-label="Close">×</button></div>
+    <div class="sheet-body">
+      <input id="task-id" type="hidden"><input id="task-version" type="hidden">
+      <div class="form-group">
+        <label class="row"><span>Conversation</span><span class="select"><select id="task-scope" required></select></span></label>
+        <label class="row"><span>Author user ID</span><input id="task-user" type="number" required min="1"></label>
+        <label class="row stack"><span>Prompt</span><textarea id="task-prompt" rows="4" required maxlength="16000" placeholder="What should the bot do when this task runs?"></textarea></label>
+      </div>
+      <div class="form-label">Schedule</div>
+      <div class="form-group">
+        <label class="row"><span>Next run <small>Your local time</small></span><input id="task-at" type="datetime-local" required></label>
+        <label class="row"><span>Repeat every <small>Minutes · 0 = once</small></span><input id="task-interval" type="number" min="0" value="0"></label>
+        <label class="row"><span>Enabled</span><input id="task-active" type="checkbox" class="switch" checked></label>
+      </div>
+      <div class="sheet-actions"><button type="button" class="quiet" data-close="task-sheet">Cancel</button><button>Save task</button></div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="mcp-sheet" class="sheet" aria-labelledby="mcp-form-title">
+  <form id="mcp-form">
+    <div class="sheet-head"><h2 id="mcp-form-title">Add MCP server</h2><button id="mcp-cancel" type="button" class="sheet-close" aria-label="Close">×</button></div>
+    <div class="sheet-body">
+      <div class="form-group">
+        <label class="row"><span>Server name</span><input id="mcp-name" required pattern="[a-zA-Z][a-zA-Z0-9_\-]{0,39}" maxlength="40" placeholder="search"></label>
+        <label class="row"><span>Transport</span><span class="select"><select id="mcp-transport"><option value="http">Streamable HTTP</option><option value="sse">SSE (legacy)</option><option value="stdio">Local stdio</option></select></span></label>
+        <label class="row"><span>Enabled</span><input id="mcp-enabled" type="checkbox" class="switch"></label>
+      </div>
+      <div id="mcp-remote">
+        <div class="form-label">Connection</div>
+        <div class="form-group">
+          <label class="row"><span>Server URL</span><input id="mcp-url" type="url" placeholder="https://mcp.example.com/mcp"></label>
+          <label class="row"><span>Bearer token</span><input id="mcp-token" type="password" autocomplete="off" placeholder="Leave blank to keep saved token"></label>
+          <label class="row"><span>Clear saved token</span><input id="mcp-clear-token" type="checkbox"></label>
+        </div>
+      </div>
+      <div id="mcp-local" hidden>
+        <div class="form-label">Process</div>
+        <div class="form-group">
+          <label class="row"><span>Executable <small>Absolute path</small></span><input id="mcp-command" placeholder="/usr/local/bin/my-mcp-server"></label>
+          <label class="row stack"><span>Arguments <small>JSON array</small></span><textarea id="mcp-args" rows="2" placeholder='["--stdio"]'></textarea></label>
+          <label class="row stack"><span>Environment <small>JSON object · secret</small></span><textarea id="mcp-env" rows="3" placeholder='{"API_KEY":"..."}'></textarea></label>
+        </div>
+        <p class="help">Environment is not inherited from the agent. Blank keeps saved values; {} clears them. Use this field for credentials, not arguments.</p>
+      </div>
+      <div class="form-label">Access</div>
+      <div class="form-group">
+        <label class="row"><span>Allowed bot aliases <small>Comma-separated · * = all</small></span><input id="mcp-bots" placeholder="assistant"></label>
+        <label class="row"><span>Allowed tool names <small>Comma-separated · * = all</small></span><input id="mcp-tools" placeholder="search, get_document"></label>
+      </div>
+      <p id="mcp-bot-hint" class="help"></p>
+      <p class="help">Allowing a tool authorizes its calls, including changes it can make. Use Discover tools to inspect names before enabling access.</p>
+      <div class="sheet-actions"><button type="button" class="quiet" data-close="mcp-sheet">Cancel</button><button>Save server</button></div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="resolution-sheet" class="sheet" aria-labelledby="resolution-title">
+  <form id="resolution-form">
+    <div class="sheet-head"><div><h2 id="resolution-title">Resolve outcome</h2><p>This decision cannot be overwritten.</p></div><button type="button" id="resolution-cancel" class="sheet-close" aria-label="Close">×</button></div>
+    <div class="sheet-body">
+      <p>Record a verified outcome or close without confirming success. The uncertain operation will not be repeated; remaining response parts may resume.</p>
+      <div class="form-group">
+        <label class="row"><span>Decision</span><span class="select"><select id="resolution-action"><option value="dismiss">Close without confirming success</option><option value="confirm">Confirm externally verified result</option></select></span></label>
+        <label class="row stack"><span>Reason and evidence</span><textarea id="resolution-reason" required maxlength="2000"></textarea></label>
+      </div>
+      <div id="resolution-delivery" hidden>
+        <div class="form-label">Verified delivery</div>
+        <div class="form-group">
+          <label class="row"><span>Telegram message ID</span><input id="resolution-message" type="number" min="1"></label>
+          <label class="row"><span>Actual send time <small>With timezone</small></span><input id="resolution-time" placeholder="2026-11-04T01:00:00Z"></label>
+        </div>
+      </div>
+      <div id="resolution-tool" hidden>
+        <div class="form-label">Verified tool result</div>
+        <div class="form-group"><label class="row stack"><span>Result (JSON)</span><textarea id="resolution-result" maxlength="32000"></textarea></label></div>
+      </div>
+      <label class="inline help"><input id="resolution-ack" type="checkbox" required><span>I checked the external outcome and understand this does not retry the operation.</span></label>
+      <div class="sheet-actions"><button type="button" class="quiet" data-close="resolution-sheet">Cancel</button><button>Record resolution</button></div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="demo-sheet" class="sheet" aria-labelledby="demo-title">
+  <form id="demo-form">
+    <div class="sheet-head"><div><h2 id="demo-title">Send a local test event</h2><p>Local events only. Nothing is sent to a real Telegram chat.</p></div><button type="button" class="sheet-close" data-close="demo-sheet" aria-label="Close">×</button></div>
+    <div class="sheet-body">
+      <div class="form-group">
+        <label class="row"><span>Bot</span><span class="select"><select id="demo-bot"></select></span></label>
+        <label class="row"><span>Chat ID</span><input id="demo-chat" type="number" value="101" required></label>
+        <label class="row"><span>User ID</span><input id="demo-user" type="number" value="501" required min="1"></label>
+        <label class="row stack"><span>Message</span><textarea id="demo-text" rows="3" required placeholder="Напомни через минуту проверить результат"></textarea></label>
+      </div>
+      <div class="sheet-actions"><button type="button" class="quiet" data-close="demo-sheet">Cancel</button><button>Send through queue</button></div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="alert" class="alert" aria-labelledby="alert-title">
+  <h2 id="alert-title"></h2>
+  <p id="alert-message"></p>
+  <textarea id="alert-input" rows="4" hidden aria-label="Value"></textarea>
+  <div class="buttons"><button type="button" id="alert-cancel" class="quiet">Cancel</button><button type="button" id="alert-ok"></button></div>
+</dialog>
+</body>
+</html>
