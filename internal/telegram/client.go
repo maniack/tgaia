@@ -209,7 +209,7 @@ func (c *Client) Send(ctx context.Context, chatID int64, text string) (int64, ti
 }
 func (c *Client) SendTopic(ctx context.Context, chatID, threadID int64, text string) (int64, time.Time, error) {
 	var m Message
-	body := map[string]any{"chat_id": chatID, "text": text}
+	body := map[string]any{"chat_id": chatID, "text": markdownToTelegramHTML(text), "parse_mode": "HTML"}
 	if threadID > 0 {
 		body["message_thread_id"] = threadID
 	}
@@ -223,7 +223,7 @@ func (c *Client) SendTopic(ctx context.Context, chatID, threadID int64, text str
 	return m.ID, time.Unix(m.Date, 0).UTC(), nil
 }
 func (c *Client) Edit(ctx context.Context, chatID, messageID int64, text string) error {
-	return c.call(ctx, "editMessageText", map[string]any{"chat_id": chatID, "message_id": messageID, "text": text}, nil)
+	return c.call(ctx, "editMessageText", map[string]any{"chat_id": chatID, "message_id": messageID, "text": markdownToTelegramHTML(text), "parse_mode": "HTML"}, nil)
 }
 func (c *Client) Delete(ctx context.Context, chatID, messageID int64) error {
 	return c.call(ctx, "deleteMessage", map[string]any{"chat_id": chatID, "message_id": messageID}, nil)

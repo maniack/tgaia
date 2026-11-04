@@ -38,6 +38,8 @@ make build
 Open http://127.0.0.1:8080/. Mock OIDC logs in as `local-admin` in the
 `local-admins` group; real OIDC validates issuer, signature, audience, state, nonce
 and PKCE and allows only identities whose `groups` claim intersects `admin_groups`.
+Health, readiness and Prometheus metrics are available only on the dedicated
+loopback listener at http://127.0.0.1:9090/ (`/healthz`, `/readyz`, `/metrics`).
 Stop with Ctrl-C. The default local command applies versioned migrations before
 starting. Explicit `serve` never migrates and is intended for production after the
 separate `db-migrate` step.
@@ -60,12 +62,18 @@ apply automatically (DB polling every 250 ms).
 The UI shows apply status/errors; invalid changes retain the last working configuration.
 In-flight jobs retain their LLM snapshot; MCP revocations are checked before each call. Per-bot
 system prompts are read anew on each job. Database connection (including timeout) and
-OIDC and process `role` stay bootstrap-only. To prevent UI lockout, `listen` and `public_url`
+OIDC, process `role`, `observability.listen` and `telegram.webhook_listen` stay bootstrap-only. To prevent UI lockout, `listen` and `public_url`
 are excluded from the Web UI settings API/editor (including Reset); manage them through
-configuration or operator-level scoped DB changes. `listen` belongs to `api` or `worker`,
-while `public_url` belongs to `api`. Migration 016 discards legacy unscoped values for these
+configuration or operator-level scoped DB changes. `listen` and `public_url` belong to
+the `api` scope. Worker processes do not open the application listener;
+they expose only the bootstrap-configured observability listener. Migration 016 discards legacy unscoped values for these
 three deployment-local keys instead of applying them to every replica. `config-check` currently validates/prints only the redacted
 storage/CLI configuration; full app validation occurs during `serve`.
+
+In Telegram webhook mode, an empty `telegram.webhook_listen` serves
+`/telegram/<bot_id>` on the application listener. Set it (or
+`TGAIA_TELEGRAM_WEBHOOK_LISTEN`) to a distinct address to expose only that route on a
+dedicated listener. Keep routing and TLS termination in the trusted reverse proxy.
 
 See the comments in `config/config.example.yaml` for every bootstrap app setting and default
 operational limit. YAML leaf values must be strings; quote numeric values and booleans.
@@ -83,6 +91,8 @@ Outgoing sends use durable intents. Unknown Telegram outcomes are marked `uncert
 and are not blindly resent; exactly-once external delivery is not promised. The UI
 provides paginated history/lists and manual confirmation or dismissal of uncertain
 deliveries/tool calls, with evidence, version checks and recorded administrator decisions.
+Bot replies use simple standard Markdown, converted to Telegram's supported HTML subset;
+raw HTML and unsafe link schemes are escaped instead of passed through.
 Resolving an outcome never blindly repeats the uncertain external operation. Schedules support one-shot or fixed-interval
 execution (minimum 60 seconds); after downtime, repeat schedules emit one overdue
 occurrence and advance to the next future time. Calendar/timezone recurrence is pending.

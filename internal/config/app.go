@@ -13,29 +13,31 @@ import (
 )
 
 type App struct {
-	Limits            map[string]string
-	OTLPEndpoint      string
-	DefaultPromptFile string
-	MCPServers        []MCPServer
-	LogLevel          slog.Level
-	AgentID           string
-	Listen            string
-	PublicURL         string
-	Role              string
-	LLMEndpoint       string
-	LLMModel          string
-	LLMKey            Secret
-	MockLLM           bool
-	OIDCMode          string
-	OIDCIssuer        string
-	OIDCClientID      string
-	OIDCClientSecret  Secret
-	SessionKey        Secret
-	AdminGroups       []string
-	TelegramMode      string
-	Bots              []Bot
-	MemoryWindow      time.Duration
-	MemoryInterval    time.Duration
+	Limits                map[string]string
+	OTLPEndpoint          string
+	ObservabilityListen   string
+	DefaultPromptFile     string
+	MCPServers            []MCPServer
+	LogLevel              slog.Level
+	AgentID               string
+	Listen                string
+	PublicURL             string
+	Role                  string
+	LLMEndpoint           string
+	LLMModel              string
+	LLMKey                Secret
+	MockLLM               bool
+	OIDCMode              string
+	OIDCIssuer            string
+	OIDCClientID          string
+	OIDCClientSecret      Secret
+	SessionKey            Secret
+	AdminGroups           []string
+	TelegramMode          string
+	TelegramWebhookListen string
+	Bots                  []Bot
+	MemoryWindow          time.Duration
+	MemoryInterval        time.Duration
 }
 type Bot struct {
 	DisplayName   string // Resolved by getMe; not a configuration setting.
@@ -49,6 +51,7 @@ type appSchema struct {
 	Limits        map[string]string `yaml:"limits"`
 	Observability struct {
 		OTLPEndpoint string `yaml:"otlp_endpoint"`
+		Listen       string `yaml:"listen"`
 	} `yaml:"observability"`
 	MCP struct {
 		Servers map[string]mcpServerSchema `yaml:"servers"`
@@ -72,8 +75,9 @@ type appSchema struct {
 		AdminGroups  string `yaml:"admin_groups"`
 	} `yaml:"oidc"`
 	Telegram struct {
-		Mode string `yaml:"mode"`
-		Bots map[string]struct {
+		Mode          string `yaml:"mode"`
+		WebhookListen string `yaml:"webhook_listen"`
+		Bots          map[string]struct {
 			ID            string `yaml:"id"`
 			Username      string `yaml:"username"`
 			Token         string `yaml:"token"`
@@ -101,6 +105,8 @@ func (f *File) App() (App, error) {
 	}
 	c := App{AgentID: get("agent_id", "TGAIA_AGENT_ID", ""), Listen: get("listen", "TGAIA_LISTEN", ""), PublicURL: get("public_url", "TGAIA_PUBLIC_URL", ""), Role: get("role", "TGAIA_ROLE", ""), LLMEndpoint: get("llm.endpoint", "TGAIA_LLM_ENDPOINT", ""), LLMModel: get("llm.model", "TGAIA_LLM_MODEL", ""), LLMKey: NewSecret(get("llm.api_key", "TGAIA_LLM_API_KEY", "")), OIDCMode: get("oidc.mode", "TGAIA_OIDC_MODE", "oidc"), OIDCIssuer: get("oidc.issuer", "TGAIA_OIDC_ISSUER", ""), OIDCClientID: get("oidc.client_id", "TGAIA_OIDC_CLIENT_ID", ""), OIDCClientSecret: NewSecret(get("oidc.client_secret", "TGAIA_OIDC_CLIENT_SECRET", "")), SessionKey: NewSecret(get("oidc.session_key", "TGAIA_SESSION_KEY", "")), AdminGroups: splitCSV(get("oidc.admin_groups", "TGAIA_ADMIN_GROUPS", "")), TelegramMode: get("telegram.mode", "TGAIA_TELEGRAM_MODE", "webhook")}
 	c.OTLPEndpoint = get("observability.otlp_endpoint", "TGAIA_OTLP_ENDPOINT", "")
+	c.ObservabilityListen = get("observability.listen", "TGAIA_OBSERVABILITY_LISTEN", "127.0.0.1:9090")
+	c.TelegramWebhookListen = get("telegram.webhook_listen", "TGAIA_TELEGRAM_WEBHOOK_LISTEN", "")
 	var err error
 	c.MockLLM, err = strconv.ParseBool(get("llm.mock", "TGAIA_LLM_MOCK", "false"))
 	if err != nil {
@@ -166,17 +172,32 @@ func (c App) Validate() error {
 	if c.OIDCMode != "mock" && c.OIDCMode != "oidc" {
 		return errors.New("OIDC mode must be mock or oidc")
 	}
-	host, _, err := net.SplitHostPort(c.Listen)
+	host, port, err := net.SplitHostPort(c.Listen)
 	if err != nil {
 		return errors.New("invalid listen address")
+	}
+	observabilityListen := c.ObservabilityAddress()
+	observabilityHost, observabilityPort, err := net.SplitHostPort(observabilityListen)
+	if err != nil || observabilityPort == port {
+		return errors.New("invalid or conflicting observability listen address")
+	}
+	webhookHost := ""
+	if c.TelegramWebhookListen != "" {
+		var webhookPort string
+		webhookHost, webhookPort, err = net.SplitHostPort(c.TelegramWebhookListen)
+		if err != nil || webhookPort == port || webhookPort == observabilityPort {
+			return errors.New("invalid or conflicting Telegram webhook listen address")
+		}
 	}
 	u, err := url.Parse(c.PublicURL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return errors.New("invalid public URL")
 	}
 	local := host == "127.0.0.1" || host == "::1" || host == "localhost"
+	observabilityLocal := observabilityHost == "127.0.0.1" || observabilityHost == "::1" || observabilityHost == "localhost"
+	webhookLocal := c.TelegramWebhookListen == "" || webhookHost == "127.0.0.1" || webhookHost == "::1" || webhookHost == "localhost"
 	if c.OIDCMode == "mock" || c.TelegramMode == "mock" || c.MockLLM {
-		if !local || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost" && u.Hostname() != "::1") {
+		if !local || !observabilityLocal || !webhookLocal || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost" && u.Hostname() != "::1") {
 			return errors.New("mocks are permitted only on loopback")
 		}
 	}
@@ -201,6 +222,13 @@ func (c App) Validate() error {
 		}
 	}
 	return c.validateMCP()
+}
+
+func (c App) ObservabilityAddress() string {
+	if c.ObservabilityListen == "" {
+		return "127.0.0.1:9090"
+	}
+	return c.ObservabilityListen
 }
 
 func splitCSV(value string) []string {

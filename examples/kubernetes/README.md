@@ -81,7 +81,8 @@ cp config/system-prompt.md data/system-prompt.k8s.md
 # Edit data/config.k8s.yaml using the production alternatives documented inline.
 ```
 
-Change app.listen to `0.0.0.0:8080` to match this example's Service/probes. Replace
+Change app.listen to `0.0.0.0:8080` to match this example's Service. The manifests
+override app.observability.listen with `0.0.0.0:9090` for pod probes and metrics. Replace
 the SQLite DSN with the PostgreSQL URL described below, set app.public_url to the
 external HTTPS URL without a path, app.oidc.mode to oidc, app.telegram.mode to polling
 and app.llm.mock to "false". Supply the documented issuer/client/group, LLM and bot
@@ -144,7 +145,12 @@ advisory lock. serve does not run them. To rerun the Job, first confirm the prev
 one has finished, then delete job/tgaia-migrate and reapply it. Do not delete a running
 Job to start another.
 
-API and worker replicas have startup/readiness/liveness probes. /readyz checks schema access and, for worker/all roles, that the worker group is running. /healthz checks the HTTP process. Worker listeners expose only health/readiness/metrics, not administration or webhook routes. Example resource requests/limits need load-based tuning.
+API and worker replicas have startup/readiness/liveness probes on the dedicated `ops`
+port 9090. `/readyz` checks schema access and, for worker/all roles, that the worker
+group is running; `/healthz` checks the HTTP process. API/UI/webhook traffic uses only
+port 8080. Worker pods open no application listener. The Service and Ingress expose
+only port 8080; do not route the unauthenticated `ops` port through a public ingress.
+Example resource requests/limits need load-based tuning.
 Pods have no Kubernetes API token, run non-root with a read-only root filesystem,
 drop all capabilities and use seccomp.
 
@@ -182,6 +188,12 @@ that route and X-Telegram-Bot-Api-Secret-Token without an external browser-login
 The application's UI/API have their own OIDC protection. Never run polling and
 webhooks simultaneously for one bot; coordinate Telegram registration with app
 configuration when switching. See [Telegram setWebhook](https://core.telegram.org/bots/api#setwebhook).
+
+By default the webhook route shares port 8080 with the application. To isolate it,
+set `app.telegram.webhook_listen: 0.0.0.0:8081` (or the equivalent environment
+variable), add a named `webhook` container port and Service port targeting 8081, and
+route only the `/telegram` ingress prefix to that Service port. The dedicated listener
+serves no UI, API, health or metrics routes. It must not be used by worker pods.
 
 ## 6. Settings, scaling and upgrades
 
@@ -257,7 +269,7 @@ cluster; multiarch push and production failover remain untested.
 
 ## Observability and audit
 
-Scrape `/metrics` on API and worker pod ports. Counters include job attempts/errors, accumulated duration and active handlers; queue counts are database-wide, so avoid summing them across replicas. Process counters reset on restart. Keep metrics and probe routes internal using ingress routing/NetworkPolicy; they have no OIDC and contain no chat IDs, prompts or credentials.
+Scrape `/metrics` on the API and worker pods' `ops` port 9090. Counters include job attempts/errors, accumulated duration and active handlers; queue counts are database-wide, so avoid summing them across replicas. Process counters reset on restart. Keep metrics and probe routes internal using NetworkPolicy; the Service and Ingress intentionally expose only the application port. The ops routes have no OIDC and contain no chat IDs, prompts or credentials.
 
 Set `app.observability.otlp_endpoint` (or `TGAIA_OTLP_ENDPOINT`) explicitly to enable OTLP/HTTP tracing; an empty value disables export. Database overrides hot-reload it. Worker jobs are root spans, with nested LLM/MCP spans; no prompts, tokens, model responses or raw errors are exported. Sampling is parent-based at 10% for roots. Export uses a bounded batch queue, a 5s timeout and shutdown flush. No collector endpoint is built into defaults. See the [official Go exporter documentation](https://opentelemetry.io/docs/languages/go/exporters/).
 

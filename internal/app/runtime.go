@@ -195,6 +195,12 @@ func (r *runtime) prepare(ctx context.Context, values map[string]string) (*snaps
 func (r *runtime) handler(next *snapshot) http.Handler {
 	return (&webui.Server{DB: r.db, Auth: next.auth, Config: next.apiConfig, Base: r.base, Settings: r.settings, RuntimeStatus: r.Status, Monitor: r.monitor}).Handler()
 }
+func (r *runtime) observabilityHandler(next *snapshot) http.Handler {
+	return (&webui.Server{DB: r.db, Config: next.config, Monitor: r.monitor}).ObservabilityHandler()
+}
+func (r *runtime) webhookHandler(next *snapshot) http.Handler {
+	return (&webui.Server{DB: r.db, Config: next.config}).WebhookHandler()
+}
 func (r *runtime) handlers() map[string]queue.Handler {
 	handlers := map[string]queue.Handler{}
 	for _, kind := range []string{"respond", "compact", "message_action"} {
@@ -222,14 +228,14 @@ type httpInstance struct {
 	address string
 }
 
-func stageHTTP(cfg config.App, handler http.Handler) (*httpInstance, net.Listener, error) {
-	listener, err := net.Listen("tcp", cfg.Listen)
+func stageHTTP(address string, handler http.Handler) (*httpInstance, net.Listener, error) {
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return nil, nil, errors.New("cannot bind new listen address; previous runtime retained")
 	}
 	slot := &handlerSlot{}
 	slot.Store(handler)
-	return &httpInstance{address: cfg.Listen, slot: slot, server: &http.Server{Handler: slot, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 16}}, listener, nil
+	return &httpInstance{address: address, slot: slot, server: &http.Server{Handler: slot, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 16}}, listener, nil
 }
 
 type runningGroup struct {
@@ -294,7 +300,7 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 		r.issuer = issuer
 	}
 	r.log = slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: &r.level}))
-	var httpLive *httpInstance
+	var appLive, observabilityLive, webhookLive *httpInstance
 	var workers, polling *runningGroup
 	var httpWG sync.WaitGroup
 	faults := make(chan error, 4)
@@ -312,18 +318,50 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 			}
 		}()
 	}
-	defer func() { workers.stop(); polling.stop(); stopHTTP(httpLive); httpWG.Wait() }()
+	defer func() {
+		workers.stop()
+		polling.stop()
+		stopHTTP(appLive)
+		stopHTTP(observabilityLive)
+		stopHTTP(webhookLive)
+		httpWG.Wait()
+	}()
 	publish := func(next *snapshot) error {
 		previous := r.current.Load()
 		if err := r.monitor.Configure(ctx, next.config.OTLPEndpoint); err != nil {
 			return err
 		}
-		var staged *httpInstance
-		var listener net.Listener
-		if httpLive == nil || httpLive.address != next.apiConfig.Listen {
+		var stagedApp, stagedObservability, stagedWebhook *httpInstance
+		var appListener, observabilityListener, webhookListener net.Listener
+		if next.config.Role != "worker" && (appLive == nil || appLive.address != next.apiConfig.Listen) {
 			var err error
-			staged, listener, err = stageHTTP(next.apiConfig, r.handler(next))
+			stagedApp, appListener, err = stageHTTP(next.apiConfig.Listen, r.handler(next))
 			if err != nil {
+				return err
+			}
+		}
+		observabilityAddress := next.config.ObservabilityAddress()
+		if observabilityLive == nil || observabilityLive.address != observabilityAddress {
+			var err error
+			stagedObservability, observabilityListener, err = stageHTTP(observabilityAddress, r.observabilityHandler(next))
+			if err != nil {
+				if appListener != nil {
+					_ = appListener.Close()
+				}
+				return err
+			}
+		}
+		webhookWanted := next.config.Role != "worker" && next.config.TelegramMode == "webhook" && next.config.TelegramWebhookListen != ""
+		if webhookWanted && (webhookLive == nil || webhookLive.address != next.config.TelegramWebhookListen) {
+			var err error
+			stagedWebhook, webhookListener, err = stageHTTP(next.config.TelegramWebhookListen, r.webhookHandler(next))
+			if err != nil {
+				if appListener != nil {
+					_ = appListener.Close()
+				}
+				if observabilityListener != nil {
+					_ = observabilityListener.Close()
+				}
 				return err
 			}
 		}
@@ -335,23 +373,45 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 		}
 		r.current.Store(next)
 		r.level.Set(next.config.LogLevel)
-		if staged != nil {
-			old := httpLive
-			httpLive = staged
+		startHTTP := func(instance *httpInstance, listener net.Listener, label string) {
 			httpWG.Add(1)
 			go func() {
 				defer httpWG.Done()
-				if err := staged.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				if err := instance.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					select {
-					case faults <- errors.New("HTTP server failed"):
+					case faults <- errors.New(label + " HTTP server failed"):
 					default:
 					}
 					cancel()
 				}
 			}()
+		}
+		if stagedApp != nil {
+			old := appLive
+			appLive = stagedApp
+			startHTTP(stagedApp, appListener, "application")
+			stopHTTP(old)
+		} else if appLive != nil {
+			appLive.slot.Store(r.handler(next))
+		}
+		if stagedObservability != nil {
+			old := observabilityLive
+			observabilityLive = stagedObservability
+			startHTTP(stagedObservability, observabilityListener, "observability")
 			stopHTTP(old)
 		} else {
-			httpLive.slot.Store(r.handler(next))
+			observabilityLive.slot.Store(r.observabilityHandler(next))
+		}
+		if stagedWebhook != nil {
+			old := webhookLive
+			webhookLive = stagedWebhook
+			startHTTP(stagedWebhook, webhookListener, "Telegram webhook")
+			stopHTTP(old)
+		} else if webhookWanted {
+			webhookLive.slot.Store(r.webhookHandler(next))
+		} else if webhookLive != nil {
+			stopHTTP(webhookLive)
+			webhookLive = nil
 		}
 		if previous != nil && previous.config.WorkerOptions() != next.config.WorkerOptions() {
 			workers.stop()

@@ -4,6 +4,9 @@ import "strings"
 
 // Identity and cross-role policies remain shared; transport/compute knobs may specialize.
 func AllowedSettingScope(scope, name string) bool {
+	if name == "observability.listen" || name == "telegram.webhook_listen" {
+		return false
+	}
 	if scope == "" || scope == "shared" {
 		return name != "role" && name != "listen" && name != "public_url"
 	}
@@ -14,7 +17,7 @@ func AllowedSettingScope(scope, name string) bool {
 		return name == "listen" || name == "public_url" || name == "limits.telegram_timeout"
 	}
 	if scope == "worker" {
-		return name == "listen" || strings.HasPrefix(name, "llm.") || strings.HasPrefix(name, "memory.") || name == "mcp.servers" || (strings.HasPrefix(name, "limits.") && name != "limits.active_tasks_per_user")
+		return strings.HasPrefix(name, "llm.") || strings.HasPrefix(name, "memory.") || name == "mcp.servers" || (strings.HasPrefix(name, "limits.") && name != "limits.active_tasks_per_user")
 	}
 	return false
 }

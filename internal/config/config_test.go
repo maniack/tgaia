@@ -43,11 +43,31 @@ func TestOIDCAdminGroupsConfiguration(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("admin groups rejected: %v", err)
 	}
+	cfg.ObservabilityListen = "127.0.0.1:8080"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "observability") {
+		t.Fatalf("shared application and observability port accepted: %v", err)
+	}
+	cfg.ObservabilityListen = "127.0.0.1:9090"
+	cfg.TelegramWebhookListen = "127.0.0.1:8080"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "webhook") {
+		t.Fatalf("shared application and webhook port accepted: %v", err)
+	}
+	cfg.TelegramWebhookListen = "127.0.0.1:9090"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "webhook") {
+		t.Fatalf("shared observability and webhook port accepted: %v", err)
+	}
+	cfg.TelegramWebhookListen = "127.0.0.1:8081"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("dedicated webhook port rejected: %v", err)
+	}
 	groups := splitCSV(" /team/admins, platform-admins, ,/team/admins ")
 	if strings.Join(groups, "|") != "/team/admins|platform-admins|/team/admins" {
 		t.Fatalf("unexpected groups: %#v", groups)
 	}
 	if err := ValidateEnv([]string{"TGAIA_ADMIN_GROUPS=/team/admins"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateEnv([]string{"TGAIA_TELEGRAM_WEBHOOK_LISTEN=127.0.0.1:8081"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateEnv([]string{"TGAIA_ADMIN_SUBJECTS=legacy"}); err == nil {

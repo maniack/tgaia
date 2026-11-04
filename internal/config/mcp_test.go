@@ -21,6 +21,7 @@ func TestMCPFileAndOverride(t *testing.T) {
     client_id: test
   telegram:
     mode: mock
+    webhook_listen: 127.0.0.1:8081
     bots:
       one:
         id: "1"
@@ -44,6 +45,9 @@ func TestMCPFileAndOverride(t *testing.T) {
 	}
 	if len(cfg.MCPServers) != 1 || cfg.MCPServers[0].Token.Reveal() != "hidden-secret" {
 		t.Fatal("file MCP not read")
+	}
+	if cfg.TelegramWebhookListen != "127.0.0.1:8081" {
+		t.Fatal("Telegram webhook listener not read")
 	}
 	next, err := cfg.WithSettings(map[string]string{"mcp.servers": "[]"})
 	if err != nil || len(next.MCPServers) != 0 || len(cfg.MCPServers) != 1 {

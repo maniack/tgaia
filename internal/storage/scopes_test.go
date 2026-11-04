@@ -47,16 +47,12 @@ func TestScopedSettingsPrecedenceAndSecrets(t *testing.T) {
 	if err := api.Put(ctx, "listen", "127.0.0.1:2", 0); err != nil {
 		t.Fatal("API listener rejected", err)
 	}
-	if err := worker.Put(ctx, "listen", "127.0.0.1:3", 0); err != nil {
-		t.Fatal("worker listener rejected", err)
+	if err := worker.Put(ctx, "listen", "127.0.0.1:3", 0); err == nil {
+		t.Fatal("unused worker application listener accepted")
 	}
 	apiValues, _, err := settings.LoadResolved(ctx, "api")
 	if err != nil || apiValues["listen"] != "127.0.0.1:2" {
 		t.Fatal("API listener scope not resolved", err)
-	}
-	workerValues, _, err := settings.LoadResolved(ctx, "worker")
-	if err != nil || workerValues["listen"] != "127.0.0.1:3" {
-		t.Fatal("worker listener scope not resolved", err)
 	}
 	if err := worker.Delete(ctx, "llm.model", 1); err != nil {
 		t.Fatal(err)

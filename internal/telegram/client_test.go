@@ -1,6 +1,45 @@
 package telegram
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/maniack/tgaia/internal/config"
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+func TestSendAndEditUseTelegramHTML(t *testing.T) {
+	var requests []map[string]any
+	client := New(config.NewSecret("test-token"))
+	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		requests = append(requests, body)
+		result := `{"ok":true,"result":{"message_id":7,"date":1}}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(result)), Header: make(http.Header)}, nil
+	})
+	if _, _, err := client.Send(context.Background(), 1, "**bold** <tag>"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Edit(context.Background(), 1, 7, "`code`"); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 2 || requests[0]["parse_mode"] != "HTML" || requests[0]["text"] != "<b>bold</b> &lt;tag&gt;" {
+		t.Fatalf("send did not use safe Telegram HTML: %#v", requests)
+	}
+	if requests[1]["parse_mode"] != "HTML" || requests[1]["text"] != "<code>code</code>" {
+		t.Fatalf("edit did not use safe Telegram HTML: %#v", requests[1])
+	}
+}
 
 func TestResponseTriggers(t *testing.T) {
 	for _, tc := range []struct {

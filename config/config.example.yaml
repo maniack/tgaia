@@ -28,6 +28,9 @@ app:
   role: all
 
   observability:
+    # Dedicated listener for /healthz, /readyz and /metrics. Keep it off public ingress.
+    # Containers commonly use 0.0.0.0:9090 and restrict access with network policy.
+    listen: 127.0.0.1:9090
     # OTLP/HTTP trace endpoint. Empty disables trace export.
     otlp_endpoint: ""
 
@@ -63,6 +66,9 @@ app:
     # mock, polling or webhook. Mock mode is permitted only on loopback.
     # Polling needs no inbound Telegram route; webhook requires HTTPS ingress.
     mode: mock
+    # Optional dedicated listener for /telegram/<bot_id>. Empty serves the webhook
+    # on app.listen. When set, expose only this route through the trusted ingress.
+    webhook_listen: ""
     bots:
       # Configuration alias used by MCP allowlists; it is not the Telegram username.
       assistant:

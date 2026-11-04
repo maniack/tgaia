@@ -56,8 +56,8 @@ func TestAllRoleUsesAPITransportAndWorkerExecutionScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	apiAddress := freeAddress(t)
-	workerAddress := freeAddress(t)
-	base := config.App{AgentID: "a", Role: "all", Listen: freeAddress(t), PublicURL: "http://127.0.0.1:8080", OIDCMode: "mock", OIDCClientID: "test", SessionKey: config.NewSecret(strings.Repeat("k", 32)), MockLLM: true, TelegramMode: "mock", MemoryWindow: time.Hour, MemoryInterval: time.Second, Bots: []config.Bot{{Name: "assistant", ID: 1, Username: "bot"}}}
+	observabilityAddress := freeAddress(t)
+	base := config.App{AgentID: "a", Role: "all", Listen: freeAddress(t), ObservabilityListen: observabilityAddress, PublicURL: "http://127.0.0.1:8080", OIDCMode: "mock", OIDCClientID: "test", SessionKey: config.NewSecret(strings.Repeat("k", 32)), MockLLM: true, TelegramMode: "mock", MemoryWindow: time.Hour, MemoryInterval: time.Second, Bots: []config.Bot{{Name: "assistant", ID: 1, Username: "bot"}}}
 	settings, err := db.Settings(base.SessionKey)
 	if err != nil {
 		db.Close()
@@ -69,7 +69,7 @@ func TestAllRoleUsesAPITransportAndWorkerExecutionScopes(t *testing.T) {
 		settings *storage.Settings
 		name     string
 		value    string
-	}{{api, "listen", apiAddress}, {api, "public_url", "http://" + apiAddress}, {worker, "listen", workerAddress}, {worker, "llm.model", "worker-model"}} {
+	}{{api, "listen", apiAddress}, {api, "public_url", "http://" + apiAddress}, {worker, "llm.model", "worker-model"}} {
 		if err := change.settings.Put(ctx, change.name, change.value, 0); err != nil {
 			db.Close()
 			t.Fatal(err)
@@ -79,16 +79,49 @@ func TestAllRoleUsesAPITransportAndWorkerExecutionScopes(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- Run(ctx, dbc, base, io.Discard) }()
 	eventually(t, func() bool {
-		res, err := http.Get("http://" + apiAddress + "/healthz")
+		res, err := http.Get("http://" + observabilityAddress + "/readyz")
 		if err != nil {
 			return false
 		}
 		res.Body.Close()
 		return res.StatusCode == http.StatusOK
 	})
-	if connection, err := net.DialTimeout("tcp", workerAddress, 100*time.Millisecond); err == nil {
-		connection.Close()
-		t.Fatal("all role exposed worker-scoped listener instead of API listener")
+	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
+		res, err := http.Get("http://" + apiAddress + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("ops route %s exposed on application listener: %d", path, res.StatusCode)
+		}
+	}
+	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
+		res, err := http.Get("http://" + observabilityAddress + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("ops route %s unavailable on observability listener: %d", path, res.StatusCode)
+		}
+	}
+	noRedirect := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := noRedirect.Get("http://" + apiAddress + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode == http.StatusNotFound {
+		t.Fatal("application route missing from application listener")
+	}
+	res, err = noRedirect.Get("http://" + observabilityAddress + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("application route exposed on observability listener: %d", res.StatusCode)
 	}
 	cancel()
 	select {
@@ -123,13 +156,15 @@ func testRuntimeReload(t *testing.T, count int) {
 		t.Fatal(err)
 	}
 	type replica struct {
-		url    string
-		client *http.Client
+		url              string
+		observabilityURL string
+		client           *http.Client
 	}
 	replicas := []replica{}
 	for range count {
 		cfg := base
 		cfg.Listen = freeAddress(t)
+		cfg.ObservabilityListen = freeAddress(t)
 		cfg.PublicURL = "http://" + cfg.Listen
 		done := make(chan error, 1)
 		go func() { done <- Run(ctx, dbc, cfg, io.Discard) }()
@@ -147,7 +182,7 @@ func testRuntimeReload(t *testing.T, count int) {
 		jar, _ := cookiejar.New(nil)
 		client := &http.Client{Jar: jar, Timeout: time.Second}
 		eventually(t, func() bool {
-			res, err := client.Get(cfg.PublicURL + "/healthz")
+			res, err := client.Get("http://" + cfg.ObservabilityListen + "/healthz")
 			if err != nil {
 				return false
 			}
@@ -159,7 +194,7 @@ func testRuntimeReload(t *testing.T, count int) {
 			t.Fatal(err)
 		}
 		res.Body.Close()
-		replicas = append(replicas, replica{cfg.PublicURL, client})
+		replicas = append(replicas, replica{url: cfg.PublicURL, observabilityURL: "http://" + cfg.ObservabilityListen, client: client})
 	}
 	get := func(r replica, path string, target any) bool {
 		res, err := r.client.Get(r.url + path)
@@ -306,7 +341,7 @@ func TestModelSnapshotChangesEndpointKeyAndModel(t *testing.T) {
 	defer firstServer.Close()
 	secondServer := server("second", "second-key")
 	defer secondServer.Close()
-	r := &runtime{db: db, base: config.App{AgentID: "a", Role: "worker", Listen: "127.0.0.1:8080", PublicURL: "http://127.0.0.1:8080", OIDCMode: "mock", OIDCClientID: "test", TelegramMode: "mock", MemoryWindow: time.Hour, MemoryInterval: time.Second, Bots: []config.Bot{{Name: "assistant", ID: 1, Username: "bot"}}, LLMEndpoint: firstServer.URL, LLMModel: "first", LLMKey: config.NewSecret("first-key")}}
+	r := &runtime{db: db, base: config.App{AgentID: "a", Role: "worker", Listen: "127.0.0.1:8080", ObservabilityListen: freeAddress(t), PublicURL: "http://127.0.0.1:8080", OIDCMode: "mock", OIDCClientID: "test", TelegramMode: "mock", MemoryWindow: time.Hour, MemoryInterval: time.Second, Bots: []config.Bot{{Name: "assistant", ID: 1, Username: "bot"}}, LLMEndpoint: firstServer.URL, LLMModel: "first", LLMKey: config.NewSecret("first-key")}}
 	first, err := r.prepare(ctx, nil)
 	if err != nil {
 		t.Fatal(err)

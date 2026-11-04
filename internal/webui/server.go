@@ -49,34 +49,12 @@ func (s *Server) Handler() http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	})
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "ok") })
-	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if s.DB.Agent().Ready(r.Context()) != nil || (s.Config.Role != "api" && s.Monitor != nil && !s.Monitor.WorkerRunning.Load()) {
-			http.Error(w, "schema unavailable", 503)
-			return
-		}
-		_, _ = io.WriteString(w, "ready")
-	})
-	if s.Monitor != nil {
-		r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
-			rows, err := s.DB.QueueMetrics(r.Context())
-			if err != nil {
-				http.Error(w, "metrics unavailable", 503)
-				return
-			}
-			s.Monitor.Metrics(w, r)
-			fmt.Fprintln(w, "# TYPE tgaia_queue_jobs gauge")
-			for _, row := range rows {
-				fmt.Fprintf(w, "tgaia_queue_jobs{status=%q} %d\n", row.Status, row.Count)
-			}
-		})
-	}
 	if s.Config.Role == "worker" {
 		return r
 	}
 	r.Get("/login", s.Auth.Login)
 	r.Get("/auth/callback", s.Auth.Callback)
-	if s.Config.TelegramMode == "webhook" {
+	if s.Config.TelegramMode == "webhook" && s.Config.TelegramWebhookListen == "" {
 		r.Post("/telegram/{bot}", s.webhook)
 	}
 	r.Group(func(r chi.Router) {
@@ -151,6 +129,55 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/api/demo-message", s.mutation((*Server).demoMessage))
 		}
 	})
+	return r
+}
+
+func (s *Server) ObservabilityHandler() http.Handler {
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			next.ServeHTTP(w, r)
+		})
+	})
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "ok") })
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if s.DB.Agent().Ready(r.Context()) != nil || (s.Config.Role != "api" && s.Monitor != nil && !s.Monitor.WorkerRunning.Load()) {
+			http.Error(w, "schema unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, "ready")
+	})
+	if s.Monitor != nil {
+		r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
+			rows, err := s.DB.QueueMetrics(r.Context())
+			if err != nil {
+				http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			s.Monitor.Metrics(w, r)
+			fmt.Fprintln(w, "# TYPE tgaia_queue_jobs gauge")
+			for _, row := range rows {
+				fmt.Fprintf(w, "tgaia_queue_jobs{status=%q} %d\n", row.Status, row.Count)
+			}
+		})
+	}
+	return r
+}
+
+func (s *Server) WebhookHandler() http.Handler {
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			next.ServeHTTP(w, r)
+		})
+	})
+	if s.Config.TelegramMode == "webhook" {
+		r.Post("/telegram/{bot}", s.webhook)
+	}
 	return r
 }
 func send(w http.ResponseWriter, v any) {

@@ -141,7 +141,7 @@ func TestHelpWithoutConfiguration(t *testing.T) {
 	}
 }
 
-func testAppConfig(t *testing.T, database, address string) string {
+func testAppConfig(t *testing.T, database, address, observabilityAddress string) string {
 	t.Helper()
 	return configFile(t, fmt.Sprintf(`database:
   driver: sqlite
@@ -151,6 +151,9 @@ app:
   listen: %s
   public_url: http://%s
   role: api
+  observability:
+    listen: %s
+    otlp_endpoint: ""
   llm:
     endpoint: ""
     model: ""
@@ -174,7 +177,7 @@ app:
   memory:
     window: 1h
     interval: 30s
-`, database, address, address))
+`, database, address, address, observabilityAddress))
 }
 
 func freeAddress(t *testing.T) string {
@@ -192,7 +195,8 @@ func freeAddress(t *testing.T) string {
 
 func TestDefaultCommandMigratesThenServes(t *testing.T) {
 	address := freeAddress(t)
-	path := testAppConfig(t, filepath.Join(t.TempDir(), "default.db"), address)
+	observabilityAddress := freeAddress(t)
+	path := testAppConfig(t, filepath.Join(t.TempDir(), "default.db"), address, observabilityAddress)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
@@ -203,7 +207,7 @@ func TestDefaultCommandMigratesThenServes(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	ready := false
 	for time.Now().Before(deadline) {
-		response, err := client.Get("http://" + address + "/readyz")
+		response, err := client.Get("http://" + observabilityAddress + "/readyz")
 		if err == nil {
 			response.Body.Close()
 			if response.StatusCode == http.StatusOK {
@@ -213,18 +217,32 @@ func TestDefaultCommandMigratesThenServes(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+	if !ready {
+		cancel()
+		<-done
+		t.Fatal("default command did not migrate and become ready")
+	}
+	response, err := client.Get("http://" + address + "/healthz")
+	if err != nil {
+		cancel()
+		<-done
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode == http.StatusOK {
+		cancel()
+		<-done
+		t.Fatal("health probe exposed on application listener")
+	}
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
-	}
-	if !ready {
-		t.Fatal("default command did not migrate and become ready")
 	}
 }
 
 func TestServeDoesNotMigrate(t *testing.T) {
 	address := freeAddress(t)
-	path := testAppConfig(t, filepath.Join(t.TempDir(), "unmigrated.db"), address)
+	path := testAppConfig(t, filepath.Join(t.TempDir(), "unmigrated.db"), address, freeAddress(t))
 	err := New(io.Discard, io.Discard).Run(context.Background(), []string{"tgaia", "--config", path, "serve"})
 	if err == nil {
 		t.Fatal("explicit serve migrated an empty database")
