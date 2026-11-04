@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/maniack/tgaia/internal/access"
@@ -28,7 +31,7 @@ func memoryScoped(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=16").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=17").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -107,6 +110,9 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 			if err := scoped(tx.Table("chat_directory"), in.Scope).Update("memory_revision", gorm.Expr("memory_revision+1")).Error; err != nil {
 				return err
 			}
+			if err := memoryScoped(tx.Table("explicit_memories"), in.Scope).Where("source_message_id=?", in.MessageID).Delete(&struct{}{}).Error; err != nil {
+				return err
+			}
 		} else {
 			if err := tx.Exec(`INSERT INTO conversation_messages (agent_id,bot_id,chat_id,thread_id,message_id,user_id,sender_chat_id,update_id,attachments,role,text,sent_at) VALUES (?,?,?,?,?,?,?,?,?,'user',?,?)`, in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Scope.ThreadID, in.MessageID, in.UserID, in.SenderChatID, in.UpdateID, string(attachments), in.Text, in.SentAt.UnixMilli()).Error; err != nil {
 				return err
@@ -147,6 +153,9 @@ func (a *AgentStore) Context(ctx context.Context, s chat.Scope, through int64, l
 		return result, errors.New("reading knowledge failed")
 	}
 	result.Knowledge = knowledge.Content
+	if err := memoryScoped(db.Table("explicit_memories"), s).Order("created_at DESC,source_message_id DESC").Limit(100).Find(&result.ExplicitMemories).Error; err != nil {
+		return result, errors.New("reading explicit memory failed")
+	}
 	query := memoryScoped(db.Table("conversation_messages"), s).Where("id>?", result.Summary.ThroughID)
 	if through > 0 {
 		query = query.Where("id<=?", through)
@@ -162,6 +171,128 @@ func (a *AgentStore) Context(ctx context.Context, s chat.Scope, through int64, l
 		for l, r := 0, len(result.Messages)-1; l < r; l, r = l+1, r-1 {
 			result.Messages[l], result.Messages[r] = result.Messages[r], result.Messages[l]
 		}
+	}
+	return result, nil
+}
+
+func (a *AgentStore) ApplyExplicitMemory(ctx context.Context, job queue.Job, sourceMessageID, sourceUpdateID int64, content *string, embeddingModel string, embedding []float32) error {
+	if sourceMessageID <= 0 || sourceUpdateID < 0 || job.ActorUserID <= 0 {
+		return errors.New("invalid explicit memory source")
+	}
+	if content != nil && (strings.TrimSpace(*content) == "" || len(*content) > 2000) {
+		return errors.New("invalid explicit memory")
+	}
+	encodedEmbedding, err := encodeEmbedding(embeddingModel, embedding)
+	if err != nil {
+		return err
+	}
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := fence(tx, job); err != nil {
+			return err
+		}
+		store := &AgentStore{db: tx}
+		if err := store.Check(ctx, job.Scope, job.ActorUserID); err != nil {
+			return err
+		}
+		var count int64
+		if err := memoryScoped(tx.Table("conversation_messages"), job.Scope).Where("message_id=? AND update_id=? AND user_id=? AND role='user'", sourceMessageID, sourceUpdateID, job.ActorUserID).Count(&count).Error; err != nil {
+			return errors.New("checking explicit memory source failed")
+		}
+		if count != 1 {
+			return nil
+		}
+		if content == nil {
+			if err := memoryScoped(tx.Table("explicit_memories"), job.Scope).Where("source_message_id=? AND created_by=?", sourceMessageID, job.ActorUserID).Delete(&struct{}{}).Error; err != nil {
+				return errors.New("deleting explicit memory failed")
+			}
+			return nil
+		}
+		if err := store.CheckActions(ctx, job.Scope, job.ActorUserID); err != nil {
+			return err
+		}
+		value := strings.TrimSpace(*content)
+		if err := tx.Exec(`INSERT INTO explicit_memories(agent_id,bot_id,chat_id,thread_id,source_message_id,source_update_id,created_by,content,embedding_model,embedding,created_at)
+ VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id,bot_id,chat_id,thread_id,source_message_id)
+ DO UPDATE SET source_update_id=excluded.source_update_id,created_by=excluded.created_by,content=excluded.content,embedding_model=excluded.embedding_model,embedding=excluded.embedding,created_at=excluded.created_at`, job.Scope.AgentID, job.Scope.BotID, job.Scope.ChatID, job.Scope.ThreadID, sourceMessageID, sourceUpdateID, job.ActorUserID, value, embeddingModel, encodedEmbedding, time.Now().UTC().UnixMilli()).Error; err != nil {
+			return errors.New("saving explicit memory failed")
+		}
+		return nil
+	})
+}
+
+func encodeEmbedding(model string, vector []float32) (string, error) {
+	if model == "" && len(vector) == 0 {
+		return "[]", nil
+	}
+	if model == "" || len(model) > 256 || len(vector) < 1 || len(vector) > 4096 {
+		return "", errors.New("invalid explicit memory embedding")
+	}
+	norm := 0.0
+	for _, value := range vector {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return "", errors.New("invalid explicit memory embedding")
+		}
+		norm += float64(value) * float64(value)
+	}
+	if norm == 0 {
+		return "", errors.New("invalid explicit memory embedding")
+	}
+	scale := float32(1 / math.Sqrt(norm))
+	normalized := append([]float32(nil), vector...)
+	for i := range normalized {
+		normalized[i] *= scale
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil || len(data) > 128000 {
+		return "", errors.New("invalid explicit memory embedding")
+	}
+	return string(data), nil
+}
+
+func (a *AgentStore) SearchExplicitMemories(ctx context.Context, scope chat.Scope, model string, query []float32, limit int) ([]agent.ExplicitMemory, error) {
+	if !scope.Valid() || model == "" || limit < 1 || limit > 100 {
+		return nil, errors.New("invalid explicit memory search")
+	}
+	encoded, err := encodeEmbedding(model, query)
+	if err != nil {
+		return nil, err
+	}
+	var normalized []float32
+	if json.Unmarshal([]byte(encoded), &normalized) != nil {
+		return nil, errors.New("invalid explicit memory search")
+	}
+	var rows []agent.ExplicitMemory
+	if err := memoryScoped(a.db.WithContext(ctx).Table("explicit_memories"), scope).Where("embedding_model=?", model).Order("created_at DESC,source_message_id DESC").Limit(500).Find(&rows).Error; err != nil {
+		return nil, errors.New("searching explicit memory failed")
+	}
+	type match struct {
+		memory agent.ExplicitMemory
+		score  float64
+	}
+	matches := make([]match, 0, len(rows))
+	for _, row := range rows {
+		var vector []float32
+		if json.Unmarshal([]byte(row.Embedding), &vector) != nil || len(vector) != len(normalized) {
+			continue
+		}
+		score := 0.0
+		for i := range vector {
+			score += float64(vector[i] * normalized[i])
+		}
+		matches = append(matches, match{memory: row, score: score})
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].score == matches[j].score {
+			return matches[i].memory.CreatedAt > matches[j].memory.CreatedAt
+		}
+		return matches[i].score > matches[j].score
+	})
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+	result := make([]agent.ExplicitMemory, len(matches))
+	for i := range matches {
+		result[i] = matches[i].memory
 	}
 	return result, nil
 }

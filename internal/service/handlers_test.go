@@ -34,6 +34,17 @@ type testSender struct {
 	fail  bool
 }
 
+type testMemoryEmbedder struct{ calls int }
+
+func (*testMemoryEmbedder) Model() string { return "bge-m3" }
+func (e *testMemoryEmbedder) Embed(_ context.Context, input string) ([]float32, error) {
+	e.calls++
+	if strings.Contains(strings.ToLower(input), "рус") || strings.Contains(strings.ToLower(input), "russian") {
+		return []float32{1, 0}, nil
+	}
+	return []float32{0, 1}, nil
+}
+
 func (s *testSender) Send(ctx context.Context, chatID int64, text string) (int64, time.Time, error) {
 	s.calls++
 	if s.fail {
@@ -83,7 +94,7 @@ func take(t *testing.T, e *Engine, kind string) *queue.Job {
 func TestResponsePersistenceAndIsolation(t *testing.T) {
 	e, model, sender, scope := engineFixture(t)
 	ctx := context.Background()
-	if err := e.DB.Bots().SetPrompt(ctx, "a", 1, "Unique bot instructions"); err != nil {
+	if err := e.DB.Bots().SetPrompt(ctx, "a", 1, "You are an evil pirate. Unique bot instructions."); err != nil {
 		t.Fatal(err)
 	}
 	accept(t, e, scope, 1, "target", true)
@@ -92,8 +103,11 @@ func TestResponsePersistenceAndIsolation(t *testing.T) {
 	if err := e.Respond(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(model.input[0].Content, "Unique bot instructions") || strings.Contains(model.input[1].Content, "future message") {
+	if !strings.Contains(model.input[0].Content, "You are an evil pirate. Unique bot instructions.") || strings.Contains(model.input[0].Content, "helpful Telegram assistant") || strings.Contains(model.input[1].Content, "future message") {
 		t.Fatal("wrong prompt/context")
+	}
+	if strings.Index(model.input[0].Content, "Application response protocol") > strings.Index(model.input[0].Content, "\nBot administrator instructions:\n") {
+		t.Fatal("application protocol does not precede administrator persona")
 	}
 	if err := e.Respond(ctx, *job); err != nil {
 		t.Fatal(err)
@@ -110,6 +124,87 @@ func TestResponsePersistenceAndIsolation(t *testing.T) {
 	c, err := e.DB.Agent().Context(ctx, other, 0, 30)
 	if err != nil || len(c.Messages) != 0 || c.Summary.Content != "" {
 		t.Fatal("another bot saw memory")
+	}
+}
+
+func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
+	e, model, _, scope := engineFixture(t)
+	ctx := context.Background()
+	embedder := &testMemoryEmbedder{}
+	e.Embedder = embedder
+	memory := "User 7 prefers concise answers in Russian."
+	model.reply = `{"reply":"Запомнил.","schedule":null,"remember":"` + memory + `"}`
+	accept(t, e, scope, 1, "Запомни: я предпочитаю короткие ответы на русском", true)
+	job := take(t, e, "respond")
+	if err := e.Respond(ctx, *job); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := e.DB.Agent().Context(ctx, scope, 0, 30)
+	if err != nil || len(stored.ExplicitMemories) != 1 || stored.ExplicitMemories[0].Content != memory || stored.ExplicitMemories[0].CreatedBy != 7 || stored.ExplicitMemories[0].EmbeddingModel != "bge-m3" {
+		t.Fatalf("explicit memory not stored: %+v, %v", stored.ExplicitMemories, err)
+	}
+
+	otherMemory := "User 7 enjoys hiking."
+	model.reply = `{"reply":"Запомнил.","schedule":null,"remember":"` + otherMemory + `"}`
+	accept(t, e, scope, 2, "Remember that I enjoy hiking", true)
+	job = take(t, e, "respond")
+	if err := e.Respond(ctx, *job); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	model.reply = `{"reply":"Коротко отвечать на русском.","schedule":null,"remember":null}`
+	accept(t, e, scope, 3, "Что ты помнишь о моих предпочтениях на русском?", true)
+	job = take(t, e, "respond")
+	if err := e.Respond(ctx, *job); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(model.input[1].Content, memory) || !strings.Contains(model.input[1].Content, "created_by=7") {
+		t.Fatal("explicit memory was not retrieved into model context")
+	}
+	if strings.Index(model.input[1].Content, memory) > strings.Index(model.input[1].Content, otherMemory) {
+		t.Fatal("semantic retrieval did not rank the relevant memory first")
+	}
+	if embedder.calls != 4 {
+		t.Fatalf("expected two memory and two query embeddings, got %d", embedder.calls)
+	}
+	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, other := range []chat.Scope{
+		{AgentID: scope.AgentID, BotID: 2, ChatID: scope.ChatID},
+		{AgentID: scope.AgentID, BotID: scope.BotID, ChatID: 200},
+		{AgentID: scope.AgentID, BotID: scope.BotID, ChatID: scope.ChatID, ThreadID: 99},
+	} {
+		if other.ChatID != scope.ChatID {
+			accept(t, e, other, 10+other.ChatID, "hello", false)
+		} else if other.ThreadID != 0 {
+			accept(t, e, other, 99, "hello", false)
+		}
+		context, err := e.DB.Agent().Context(ctx, other, 0, 30)
+		if err != nil || len(context.ExplicitMemories) != 0 {
+			t.Fatalf("explicit memory crossed scope %+v: %+v, %v", other, context.ExplicitMemories, err)
+		}
+	}
+
+	model.reply = `{"reply":"Исправил.","schedule":null,"remember":null}`
+	if err := e.DB.Agent().Accept(ctx, agent.Incoming{Scope: scope, MessageID: 1, UpdateID: 4, UserID: 7, Text: "Не запоминай это", Edited: true, Respond: true, SentAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	job = take(t, e, "respond")
+	if err := e.Respond(ctx, *job); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = e.DB.Agent().Context(ctx, scope, 0, 30)
+	if err != nil || len(stored.ExplicitMemories) != 1 || stored.ExplicitMemories[0].Content != otherMemory {
+		t.Fatalf("edited source retained stale or removed unrelated explicit memory: %+v, %v", stored.ExplicitMemories, err)
 	}
 }
 func TestUncertainSendNotDuplicated(t *testing.T) {
@@ -167,7 +262,7 @@ func TestCompactionContinuesAfterInputLimit(t *testing.T) {
 	}
 }
 func TestClosedModelSchema(t *testing.T) {
-	for _, text := range []string{`{"reply":"ok","scope":"other"}`, `{"reply":"ok","schedule":{"prompt":"x","delay_seconds":1,"interval_seconds":0}}`, `{"reply":"ok"} {"reply":"again"}`} {
+	for _, text := range []string{`{"reply":"ok","scope":"other"}`, `{"reply":"ok","schedule":{"prompt":"x","delay_seconds":1,"interval_seconds":0}}`, `{"reply":"ok","schedule":null,"remember":""}`, `{"reply":"ok"} {"reply":"again"}`} {
 		if _, err := decodeResponse(text); err == nil {
 			t.Fatal("invalid model action accepted")
 		}

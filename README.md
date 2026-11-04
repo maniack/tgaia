@@ -8,7 +8,8 @@ Telegram AI assistant in Go. Architecture and security requirements live in
 
 The current implementation includes Telegram polling/webhooks, an OpenAI-compatible LLM adapter,
 DB queue/workers, scheduled prompts, isolated chat memory with background compaction,
-and an OIDC-protected administration UI. Private messages trigger replies; in groups,
+and an OIDC-protected administration UI. Users can explicitly ask a bot to remember a
+fact for later retrieval within that bot/chat/topic only. Private messages trigger replies; in groups,
 only mentions of this bot and replies to this bot do. Other received text contributes
 to the chat's context. All bots have independent history, summaries and system prompts.
 Administrator-published knowledge is the explicit shared layer.
@@ -83,9 +84,21 @@ are encrypted using a key derived from the persistent bootstrap session key. Bac
 that key together with the DB; do not rotate it independently of encrypted overrides.
 
 SQLite uses pure Go and local files. Production uses GORM/PostgreSQL. All private
-memory keys include `(agent_id, bot_id, chat_id)`. A blocked user ID is denied across
+memory keys include `(agent_id, bot_id, chat_id, thread_id)`. A blocked user ID is denied across
 all bots/chats of its agent. The UI also supports chat blocks, task CRUD, knowledge,
 settings, bot prompts and queued edit/delete actions for known bot message IDs.
+
+Explicit requests such as “remember that …” are represented as a structured model
+action and persisted with the application's current conversation scope; the model
+cannot select another bot or chat. Set `app.memory.embedding_model: bge-m3` (or
+`TGAIA_MEMORY_EMBEDDING_MODEL`) to use the configured OpenAI-compatible LLM endpoint
+and key for embeddings. Later requests use cosine similarity over only the current
+bot/chat/topic, merge the top semantic matches with recent memories, and pass at most
+16 KB to the response model. No pgvector extension is required. Reader-only and
+anonymous senders cannot add memories, and editing the source request invalidates its
+old stored fact before regeneration. Changing the embedding model does not mix vector
+spaces; old records remain available as recent memory but require regeneration before
+they participate in semantic ranking.
 
 Outgoing sends use durable intents. Unknown Telegram outcomes are marked `uncertain`
 and are not blindly resent; exactly-once external delivery is not promised. The UI

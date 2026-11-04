@@ -19,7 +19,7 @@ func TestReaderCannotActAndPromotionIsLive(t *testing.T) {
 	}
 	f := &toolFixture{}
 	e.Tools = f
-	m.reply = `{"reply":"read-only answer","schedule":{"prompt":"forbidden","delay_seconds":60,"interval_seconds":0}}`
+	m.reply = `{"reply":"read-only answer","schedule":{"prompt":"forbidden","delay_seconds":60,"interval_seconds":0},"remember":"forbidden memory"}`
 	accept(t, e, sc, 2, "do something", true)
 	j := take(t, e, "respond")
 	if err := e.Respond(ctx, *j); err != nil {
@@ -34,6 +34,10 @@ func TestReaderCannotActAndPromotionIsLive(t *testing.T) {
 	d, err := e.DB.Agent().Dashboard(ctx)
 	if err != nil || len(d.Tasks) != 0 {
 		t.Fatal("reader created task", err)
+	}
+	memory, err := e.DB.Agent().Context(ctx, sc, 0, 30)
+	if err != nil || len(memory.ExplicitMemories) != 0 {
+		t.Fatal("reader created explicit memory", err)
 	}
 	task := agent.Task{ID: "test", AgentID: sc.AgentID, BotID: sc.BotID, ChatID: sc.ChatID, UserID: 7, Prompt: "test", RunAt: time.Now().Add(time.Hour).UnixMilli(), Active: true}
 	if err := e.DB.Agent().PutTask(ctx, task, 0); !errors.Is(err, access.ErrDenied) {

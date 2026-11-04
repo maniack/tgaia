@@ -70,6 +70,9 @@ func TestOIDCAdminGroupsConfiguration(t *testing.T) {
 	if err := ValidateEnv([]string{"TGAIA_TELEGRAM_WEBHOOK_LISTEN=127.0.0.1:8081"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := ValidateEnv([]string{"TGAIA_MEMORY_EMBEDDING_MODEL=bge-m3"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := ValidateEnv([]string{"TGAIA_ADMIN_SUBJECTS=legacy"}); err == nil {
 		t.Fatal("legacy subject allowlist environment variable accepted")
 	}

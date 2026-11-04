@@ -82,6 +82,9 @@ app:
         webhook_secret: ""
 
   memory:
+    # Optional OpenAI-compatible embedding model on the LLM endpoint. Enables
+    # semantic lookup for explicit memories; bge-m3 is recommended.
+    embedding_model: bge-m3
     # Age of messages eligible for background conversation compaction.
     window: 1h
     # Scheduler/compaction scan interval.

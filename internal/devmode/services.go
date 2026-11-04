@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -12,6 +13,22 @@ import (
 )
 
 type Model struct{}
+
+type Embedder struct{ Name string }
+
+func (e Embedder) Model() string { return e.Name }
+func (e Embedder) Embed(_ context.Context, input string) ([]float32, error) {
+	vector := make([]float32, 64)
+	for _, word := range strings.Fields(strings.ToLower(input)) {
+		hash := fnv.New64a()
+		_, _ = hash.Write([]byte(word))
+		vector[hash.Sum64()%uint64(len(vector))]++
+	}
+	if strings.TrimSpace(input) == "" {
+		return nil, fmt.Errorf("empty embedding input")
+	}
+	return vector, nil
+}
 
 func (Model) Complete(ctx context.Context, m []llm.Message) (string, error) {
 	if strings.Contains(m[0].Content, "Summarize") {

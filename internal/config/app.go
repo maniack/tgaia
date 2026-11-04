@@ -36,6 +36,7 @@ type App struct {
 	TelegramMode          string
 	TelegramWebhookListen string
 	Bots                  []Bot
+	EmbeddingModel        string
 	MemoryWindow          time.Duration
 	MemoryInterval        time.Duration
 }
@@ -85,8 +86,9 @@ type appSchema struct {
 		} `yaml:"bots"`
 	} `yaml:"telegram"`
 	Memory struct {
-		Window   string `yaml:"window"`
-		Interval string `yaml:"interval"`
+		EmbeddingModel string `yaml:"embedding_model"`
+		Window         string `yaml:"window"`
+		Interval       string `yaml:"interval"`
 	} `yaml:"memory"`
 }
 
@@ -107,6 +109,7 @@ func (f *File) App() (App, error) {
 	c.OTLPEndpoint = get("observability.otlp_endpoint", "TGAIA_OTLP_ENDPOINT", "")
 	c.ObservabilityListen = get("observability.listen", "TGAIA_OBSERVABILITY_LISTEN", "127.0.0.1:9090")
 	c.TelegramWebhookListen = get("telegram.webhook_listen", "TGAIA_TELEGRAM_WEBHOOK_LISTEN", "")
+	c.EmbeddingModel = get("memory.embedding_model", "TGAIA_MEMORY_EMBEDDING_MODEL", "")
 	var err error
 	c.MockLLM, err = strconv.ParseBool(get("llm.mock", "TGAIA_LLM_MOCK", "false"))
 	if err != nil {
@@ -156,6 +159,9 @@ func (c App) Validate() error {
 
 	if !c.MockLLM && (c.LLMEndpoint == "" || c.LLMModel == "") {
 		return errors.New("LLM endpoint and model must be explicitly configured")
+	}
+	if len(c.EmbeddingModel) > 256 || c.EmbeddingModel != strings.TrimSpace(c.EmbeddingModel) {
+		return errors.New("invalid memory embedding model")
 	}
 	if c.OIDCClientID == "" {
 		return errors.New("OIDC client ID must be explicitly configured")

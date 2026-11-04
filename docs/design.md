@@ -18,7 +18,7 @@ This section is the primary implementation summary. Checkmarks describe verified
 - [x] Atomic inbox/history/enqueue; polling offsets advance after durable acceptance; per-bot polling receiver leases; webhook endpoint with a secret header.
 - [x] Private messages, mentions of the receiving bot and replies to that bot trigger responses. Entity offsets use UTF-16; replies to someone else do not trigger responses by themselves.
 - [x] OpenAI-compatible HTTP adapter with configurable LiteLLM endpoint/model/key. JSON Schema response formats and native tool calls are covered by opt-in integration tests.
-- [x] Per-bot DB system prompts and separate administrator-published shared knowledge, never populated automatically from chats.
+- [x] Per-bot DB system prompts, explicit user-requested chat memory and separate administrator-published shared knowledge, never populated automatically from chats.
 - [x] Background compaction checkpoints only whole messages actually supplied to the model and continues after input limits. Editing/deleting an answer invalidates its summary; migration 008 adds memory_revision to rebuild deduplication keys.
 - [x] Scheduler: user requests create tasks through the LLM; UI CRUD; a short transaction coordinates scheduler replicas.
 - [x] Durable send intents, cached LLM results and outbound message IDs. Uncertain outcomes are not blindly resent. UI edit/delete uses the queue and verified ID registry.
@@ -57,7 +57,7 @@ This section is the primary implementation summary. Checkmarks describe verified
 - [x] Reader/user access matrix with global user and chat block precedence (section 30).
 - [x] Images/text attachments, edited updates, isolated forum topics and reader-only channel/anonymous handling (section 29). Audio/video recognition is explicitly disabled pending models.
 - [ ] Calendar/timezone recurrence. Current schedules are one-shot or fixed interval >=60s, stored as UTC milliseconds. After downtime they emit one overdue occurrence, then advance into the future. Scheduler ticks share memory.interval.
-- [ ] History retention/deletion, separate facts/embeddings and semantic search. PoC memory is conversation_messages plus memory_summaries.
+- [ ] History/explicit-memory retention, conversational deletion and a vector index for large memory sets. The PoC has conversation messages, summaries and bounded bge-m3-compatible semantic retrieval.
 - [x] Configurable worker/pool/LLM/compaction limits, timeouts, concurrency, token budgets and quotas (section 32). Structural protocol/storage ceilings remain fixed.
 - [ ] Full application validation in config-check (currently storage/CLI only); model/prompt-version provenance for summaries.
 - [x] UI/workflow for manually resolving uncertain deliveries/tool outcomes, with version checks and durable administrator decisions (section 28).
@@ -412,6 +412,13 @@ Service/telegram tests, race, vet and CGO-free build passed. Visual typing behav
 
 Full tests, config/service/app vet and CGO-free build passed on the Go version declared in `go.mod`. Manual startup verified polling, Markdown fallback and typing support without retaining private runtime artifacts in the repository.
 
+The embedded `respond.txt` is persona-neutral application protocol: it defines the
+structured response envelope, action criteria and scope boundaries. The per-bot DB
+prompt, or `config/system-prompt.md` when no DB override exists, is appended under an
+explicit administrator-instructions section and owns persona, tone, style and language.
+Thus a custom pirate/teacher/domain persona does not conflict with a built-in assistant
+persona. Schema, permission and scope checks are still enforced by application code.
+
 ## 24. Build and test Makefile
 
 - [x] `make build`: CGO-free `bin/tgaia` with `-trimpath`.
@@ -572,3 +579,27 @@ Shared identity, credentials and policy values continue to apply to every replic
 Secrets use the scope and setting name as AES-GCM associated data, preventing ciphertext from being copied between scopes. Writes retain optimistic versions, validate the fully resolved API and worker configurations and are included in the administrative audit. Tests cover precedence, reset/inheritance, scope isolation, legacy migration, role/listener protection, UI filtering, hot reload and combined-role API transport selection. Apply migrations explicitly with old consumers stopped; migration 016 intentionally requires any former DB listener/public URL overrides to be re-created in the API scope.
 
 Isolated verification migrated schema 014 -> 016 and confirmed that authenticated API views return only settings allowed for each scope. A temporary API-scoped override applied within the watcher interval, Reset removed it, and both changes were audited. Backend responses and automated UI tests passed.
+
+## 36. Explicit user-requested memory
+
+Migration 017 adds explicit memories keyed by `(agent_id, bot_id, chat_id,
+thread_id, source_message_id)`. The response schema has a nullable `remember` action;
+the model may populate it only for an explicit current-user request. The application,
+not the model, supplies the scope and actor and verifies current access before writing.
+Reader-only and hidden senders cannot create memories.
+
+When `memory.embedding_model` is configured, remembered facts and later queries are
+embedded through the same OpenAI-compatible endpoint/key as the LLM. Embeddings are
+normalized, stored as portable JSON and compared in the application, so SQLite and
+PostgreSQL need no vector extension. Search reads at most 500 records from the current
+bot/chat/topic and merges the 20 best cosine matches with 100 recent records; at most
+16 KB reaches the response model, labelled as untrusted data. Model names are stored
+with vectors so incompatible spaces are never compared. Query-embedding failure falls
+back to recent memories; failure to embed a newly requested memory retries the job
+instead of claiming it was stored as searchable.
+
+Editing the source message deletes the stale record before a newly generated structured
+response may replace it. Automated tests cover persistence, semantic ranking,
+subsequent retrieval, reader denial, source-edit invalidation and bot/chat/topic
+isolation. A dedicated vector index/backfill becomes useful only beyond this bounded
+PoC search size.

@@ -102,6 +102,18 @@ func (r *runtime) prepare(ctx context.Context, values map[string]string) (*snaps
 			return nil, err
 		}
 	}
+	if cfg.Role != "api" && cfg.EmbeddingModel != "" {
+		if old != nil && old.config.EmbeddingModel == cfg.EmbeddingModel && old.config.MockLLM == cfg.MockLLM && old.config.LLMEndpoint == cfg.LLMEndpoint && old.config.LLMKey.Reveal() == cfg.LLMKey.Reveal() && maps.Equal(old.config.Limits, cfg.Limits) {
+			next.engine.Embedder = old.engine.Embedder
+		} else if cfg.MockLLM {
+			next.engine.Embedder = devmode.Embedder{Name: cfg.EmbeddingModel}
+		} else {
+			next.engine.Embedder, err = llm.NewEmbedder(cfg.LLMEndpoint, cfg.EmbeddingModel, cfg.LLMKey, cfg)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	for i := range next.config.Bots {
 		bot := &next.config.Bots[i]
 		if cfg.TelegramMode == "mock" {

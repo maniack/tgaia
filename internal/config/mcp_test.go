@@ -26,6 +26,8 @@ func TestMCPFileAndOverride(t *testing.T) {
       one:
         id: "1"
         username: test
+  memory:
+    embedding_model: bge-m3
   mcp:
     servers:
       docs:
@@ -48,6 +50,9 @@ func TestMCPFileAndOverride(t *testing.T) {
 	}
 	if cfg.TelegramWebhookListen != "127.0.0.1:8081" {
 		t.Fatal("Telegram webhook listener not read")
+	}
+	if cfg.EmbeddingModel != "bge-m3" {
+		t.Fatal("memory embedding model not read")
 	}
 	next, err := cfg.WithSettings(map[string]string{"mcp.servers": "[]"})
 	if err != nil || len(next.MCPServers) != 0 || len(cfg.MCPServers) != 1 {

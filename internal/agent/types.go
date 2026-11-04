@@ -68,10 +68,20 @@ type Summary struct {
 	Content   string `json:"content"`
 	ThroughID int64  `json:"through_id"`
 }
+type ExplicitMemory struct {
+	SourceMessageID int64  `json:"source_message_id"`
+	SourceUpdateID  int64  `json:"source_update_id"`
+	CreatedBy       int64  `json:"created_by"`
+	Content         string `json:"content"`
+	EmbeddingModel  string `json:"-"`
+	Embedding       string `json:"-"`
+	CreatedAt       int64  `json:"created_at"`
+}
 type Context struct {
-	Summary   Summary
-	Knowledge string
-	Messages  []Message
+	Summary          Summary
+	Knowledge        string
+	ExplicitMemories []ExplicitMemory
+	Messages         []Message
 }
 type JobPayload struct {
 	Edited         bool   `json:"edited,omitempty"`
