@@ -1,0 +1,189 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/maniack/tgaia/internal/chat"
+	"github.com/maniack/tgaia/internal/llm"
+	"github.com/maniack/tgaia/internal/mcpclient"
+)
+
+func TestSplitMessageKeepsCodeFences(t *testing.T) {
+	var lines []string
+	for i := 0; i < 400; i++ {
+		lines = append(lines, "console.log('line "+strings.Repeat("x", 20)+"');")
+	}
+	text := "Intro paragraph.\n\n```js\n" + strings.Join(lines, "\n") + "\n```\nOutro."
+	chunks := splitMessage(text, messageLimit)
+	if len(chunks) < 3 {
+		t.Fatalf("expected several chunks, got %d", len(chunks))
+	}
+	for i, chunk := range chunks {
+		if utf8.RuneCountInString(chunk) > messageLimit {
+			t.Fatalf("chunk %d exceeds limit", i)
+		}
+		if strings.Count(chunk, "```")%2 != 0 {
+			t.Fatalf("chunk %d leaves a code fence open: %q", i, chunk[:60])
+		}
+		if i > 0 && i < len(chunks)-1 && !strings.HasPrefix(chunk, "```js\n") {
+			t.Fatalf("chunk %d does not reopen the fence with its language", i)
+		}
+		if strings.Contains(chunk, "');con") {
+			t.Fatalf("chunk %d cut inside a line", i)
+		}
+	}
+	if strings.Join(chunks, "") == "" || !strings.HasSuffix(chunks[len(chunks)-1], "Outro.") {
+		t.Fatal("tail lost")
+	}
+}
+
+func TestPlanLongCodeReplyBecomesSourceDocument(t *testing.T) {
+	code := strings.Repeat("<div>row</div>\n", 400)
+	reply := "Вот игра 2048. Откройте файл в браузере.\n\n```html\n" + code + "```\n\nУдачи!"
+	pieces := plan(reply, true)
+	if len(pieces) != 1 || !pieces[0].document || pieces[0].file != "reply.html" {
+		t.Fatalf("expected one html document, got %+v", pieces)
+	}
+	if string(pieces[0].data) != code || !strings.Contains(pieces[0].text, "Откройте файл") || strings.Contains(pieces[0].text, "```") {
+		t.Fatal("document must contain only the code and caption only the prose")
+	}
+	mixed := strings.Repeat("Paragraph of prose.\n\n", 300)
+	pieces = plan(mixed, true)
+	if len(pieces) != 1 || pieces[0].file != "reply.md" || utf8.RuneCountInString(pieces[0].text) > captionLimit+1 {
+		t.Fatalf("expected markdown document with bounded caption, got %+v", pieces[0].file)
+	}
+	if got := plan(mixed, false); len(got) < 2 || got[0].document {
+		t.Fatal("senders without documents must fall back to multipart text")
+	}
+	if got := plan("short", true); len(got) != 1 || got[0].document {
+		t.Fatal("short replies stay plain messages")
+	}
+}
+
+type documentSender struct {
+	testSender
+	reject    bool
+	documents []string
+	captions  []string
+}
+
+func (s *documentSender) SendDocument(_ context.Context, _, _ int64, name string, data []byte, caption string) (int64, time.Time, error) {
+	if s.reject {
+		return 0, time.Time{}, rejectedErr{}
+	}
+	s.documents = append(s.documents, name+":"+string(data))
+	s.captions = append(s.captions, caption)
+	return int64(50000 + len(s.documents)), time.Now().UTC(), nil
+}
+
+type rejectedErr struct{}
+
+func (rejectedErr) Error() string  { return "rejected" }
+func (rejectedErr) Rejected() bool { return true }
+
+func TestLongReplyDeliveredAsDocumentWithTextFallback(t *testing.T) {
+	for _, reject := range []bool{false, true} {
+		e, m, _, scope := engineFixture(t)
+		sender := &documentSender{reject: reject}
+		e.Bots[1] = sender
+		code := strings.Repeat("let x = 1;\n", 500)
+		raw, _ := json.Marshal(map[string]any{"reply": "Готово:\n\n```js\n" + code + "```", "schedule": nil})
+		m.reply = string(raw)
+		accept(t, e, scope, 1, "write code", true)
+		job := take(t, e, "respond")
+		if err := e.Respond(context.Background(), *job); err != nil {
+			t.Fatal(err)
+		}
+		if reject {
+			if len(sender.documents) != 0 || sender.calls < 2 {
+				t.Fatalf("rejected document must fall back to multipart text, got %d messages", sender.calls)
+			}
+			continue
+		}
+		if len(sender.documents) != 1 || !strings.HasPrefix(sender.documents[0], "reply.js:let x") || sender.captions[0] != "Готово:" || sender.calls != 0 {
+			t.Fatalf("expected one source document with caption, got %+v / %d messages", sender.documents, sender.calls)
+		}
+		state, err := e.DB.Agent().DeliveryState(context.Background(), job.ID, 0)
+		if err != nil || state != "sent" {
+			t.Fatal("document delivery not recorded", state, err)
+		}
+	}
+}
+
+// singlePassFixture answers with plain text on the first tool turn and then
+// serves only the short metadata call.
+type singlePassFixture struct {
+	turns, finals int
+	lastFinal     []llm.Message
+	metadata      string
+}
+
+func (f *singlePassFixture) Open(context.Context, chat.Scope) (mcpclient.Session, error) {
+	return f, nil
+}
+func (f *singlePassFixture) Tools() []llm.Tool {
+	return []llm.Tool{{Type: "function", Function: llm.ToolFunction{Name: "lookup"}}}
+}
+func (f *singlePassFixture) Validate(string, string) error { return nil }
+func (f *singlePassFixture) Call(context.Context, string, string) (string, error) {
+	return "{}", nil
+}
+func (f *singlePassFixture) Close() {}
+func (f *singlePassFixture) Complete(context.Context, []llm.Message) (string, error) {
+	return "", errors.New("unexpected plain completion")
+}
+func (f *singlePassFixture) CompleteJSON(_ context.Context, in []llm.Message, schema json.RawMessage) (string, error) {
+	f.finals++
+	f.lastFinal = in
+	if strings.Contains(string(schema), `"reply"`) {
+		return "", errors.New("full response schema must not be used after a text turn")
+	}
+	return f.metadata, nil
+}
+func (f *singlePassFixture) CompleteTools(context.Context, []llm.Message, []llm.Tool) (llm.Message, error) {
+	f.turns++
+	return llm.Message{Role: "assistant", Content: "Полный ответ из первого хода."}, nil
+}
+
+func TestTextToolTurnIsNotRegenerated(t *testing.T) {
+	e, _, sender, scope := engineFixture(t)
+	f := &singlePassFixture{metadata: `{"schedule":{"prompt":"Напомни пользователю выпить воды сейчас","delay_seconds":300,"interval_seconds":0},"remember":null}`}
+	e.Tools = f
+	e.Model = f
+	accept(t, e, scope, 1, "напомни через 5 минут выпить воды", true)
+	job := take(t, e, "respond")
+	if err := e.Respond(context.Background(), *job); err != nil {
+		t.Fatal(err)
+	}
+	if f.turns != 1 || f.finals != 1 || sender.calls != 1 {
+		t.Fatalf("expected one tool turn, one metadata call and one message, got %d/%d/%d", f.turns, f.finals, sender.calls)
+	}
+	last := f.lastFinal[len(f.lastFinal)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "schedule") || f.lastFinal[len(f.lastFinal)-2].Content != "Полный ответ из первого хода." {
+		t.Fatal("metadata call must carry the final reply and the metadata instruction")
+	}
+	result, err := e.DB.Agent().Result(context.Background(), job.ID)
+	if err != nil || !strings.Contains(result, "Полный ответ из первого хода.") {
+		t.Fatal("stored result must reuse the tool-phase text", result)
+	}
+	d, err := e.DB.Agent().Dashboard(context.Background())
+	if err != nil || len(d.Tasks) != 1 {
+		t.Fatal("schedule from the metadata call was not applied")
+	}
+}
+
+func TestFailedNoticeRepliesToUser(t *testing.T) {
+	e, _, sender, scope := engineFixture(t)
+	accept(t, e, scope, 1, "long request", true)
+	job := take(t, e, "respond")
+	e.Failed(context.Background(), *job, "llm_timeout")
+	if sender.calls != 1 {
+		t.Fatalf("expected one failure notice, got %d", sender.calls)
+	}
+}
