@@ -50,7 +50,7 @@ func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=18").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=19").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -126,7 +126,7 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 				// neither invalidate memory nor generate a new reply.
 				return tx.Exec("UPDATE conversation_messages SET update_id=? WHERE id=?", in.UpdateID, old.ID).Error
 			}
-			if err := tx.Exec("UPDATE conversation_messages SET text=?,attachments=?,media_text='',update_id=? WHERE id=?", in.Text, string(attachments), in.UpdateID, old.ID).Error; err != nil {
+			if err := tx.Exec("UPDATE conversation_messages SET text=?,attachments=?,media_text='',update_id=?,reply_to_message_id=? WHERE id=?", in.Text, string(attachments), in.UpdateID, in.ReplyMessageID, old.ID).Error; err != nil {
 				return err
 			}
 			if err := memoryScoped(tx.Table("memory_summaries"), in.Scope).Where("through_id>=?", old.ID).Delete(&struct{}{}).Error; err != nil {
@@ -139,8 +139,16 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 				return err
 			}
 		} else {
-			if err := tx.Exec(`INSERT INTO conversation_messages (agent_id,bot_id,chat_id,thread_id,message_id,user_id,sender_chat_id,update_id,attachments,role,text,sent_at) VALUES (?,?,?,?,?,?,?,?,?,'user',?,?)`, in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Scope.ThreadID, in.MessageID, in.UserID, in.SenderChatID, in.UpdateID, string(attachments), in.Text, in.SentAt.UnixMilli()).Error; err != nil {
+			if err := tx.Exec(`INSERT INTO conversation_messages (agent_id,bot_id,chat_id,thread_id,message_id,user_id,sender_chat_id,update_id,attachments,role,text,sent_at,reply_to_message_id) VALUES (?,?,?,?,?,?,?,?,?,'user',?,?,?)`, in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Scope.ThreadID, in.MessageID, in.UserID, in.SenderChatID, in.UpdateID, string(attachments), in.Text, in.SentAt.UnixMilli(), in.ReplyMessageID).Error; err != nil {
 				return err
+			}
+			// A picture posted without addressing the bot is still described, so
+			// the chat memory knows what was shown. The job runs in chat order.
+			if !in.Respond && hasImage(in.Attachments) {
+				payload, _ := json.Marshal(agent.JobPayload{MessageID: in.MessageID, SourceUpdateID: in.UpdateID, Action: "describe"})
+				if _, err := (&Database{orm: tx}).Queue().Enqueue(ctx, queue.Input{Scope: in.Scope, ActorUserID: in.UserID, SenderChatID: in.SenderChatID, Key: fmt.Sprintf("media:%d", in.UpdateID), Kind: "media", Payload: payload, MaxAttempts: 2}); err != nil {
+					return err
+				}
 			}
 		}
 		if !in.Respond && in.ReplyMessageID > 0 {
@@ -197,7 +205,65 @@ func (a *AgentStore) Context(ctx context.Context, s chat.Scope, through int64, l
 			result.Messages[l], result.Messages[r] = result.Messages[r], result.Messages[l]
 		}
 	}
+	if err := attachQuotes(db, s, result.Messages); err != nil {
+		return result, err
+	}
 	return result, nil
+}
+
+func hasImage(attachments []agent.Attachment) bool {
+	for _, a := range attachments {
+		if a.Kind == "image" {
+			return true
+		}
+	}
+	return false
+}
+
+// attachQuotes fills Quoted for replies whose target is outside the loaded
+// window, so "this" in a reply is never a mystery to the model. Targets inside
+// the window are visible by message_id already. Bounded: a few lookups at most.
+func attachQuotes(db *gorm.DB, s chat.Scope, messages []agent.Message) error {
+	inWindow := map[int64]bool{}
+	for _, m := range messages {
+		inWindow[m.MessageID] = true
+	}
+	missing := map[int64]bool{}
+	for _, m := range messages {
+		if m.ReplyToMessageID > 0 && !inWindow[m.ReplyToMessageID] {
+			missing[m.ReplyToMessageID] = true
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(missing))
+	for id := range missing {
+		ids = append(ids, id)
+		if len(ids) == 8 {
+			break
+		}
+	}
+	var quoted []agent.Message
+	if err := historyWithUsers(db, s).Where("m.message_id IN ?", ids).Find(&quoted).Error; err != nil {
+		return errors.New("reading quoted messages failed")
+	}
+	byID := map[int64]agent.Message{}
+	for _, q := range quoted {
+		byID[q.MessageID] = q
+	}
+	for i := range messages {
+		q, ok := byID[messages[i].ReplyToMessageID]
+		if !ok || messages[i].ReplyToMessageID == 0 || inWindow[messages[i].ReplyToMessageID] {
+			continue
+		}
+		text := q.Text
+		if runes := []rune(text); len(runes) > 500 {
+			text = string(runes[:500]) + "…"
+		}
+		messages[i].Quoted = fmt.Sprintf("[%s from=%s] %s", q.Role, q.Who(), text)
+	}
+	return nil
 }
 
 func (a *AgentStore) ApplyExplicitMemory(ctx context.Context, job queue.Job, sourceMessageID, sourceUpdateID int64, content *string, embeddingModel string, embedding []float32) error {
@@ -496,6 +562,9 @@ func (a *AgentStore) ReplyContext(ctx context.Context, s chat.Scope, messageID i
 	}
 	for l, r := 0, len(c.Messages)-1; l < r; l, r = l+1, r-1 {
 		c.Messages[l], c.Messages[r] = c.Messages[r], c.Messages[l]
+	}
+	if err := attachQuotes(a.db.WithContext(ctx), s, c.Messages); err != nil {
+		return c, time.Time{}, err
 	}
 	return c, time.UnixMilli(target.SentAt), nil
 }

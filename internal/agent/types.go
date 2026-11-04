@@ -47,6 +47,25 @@ type Message struct {
 	// Sender identity as last seen (seen_users), so the model can tell people apart.
 	Username string `json:"username,omitempty"`
 	Name     string `json:"name,omitempty"`
+	// ReplyToMessageID is the message this one replied to (0 when none).
+	ReplyToMessageID int64 `json:"reply_to_message_id"`
+	// Quoted is the replied-to message when it lies outside the loaded window;
+	// filled by the store, never persisted.
+	Quoted string `json:"-" gorm:"-"`
+}
+
+// Header formats the prompt header of a history line: role, IDs, sender and
+// the reply target, with the quoted text when it is not otherwise visible.
+func (m Message) Header() string {
+	h := fmt.Sprintf("[%s message_id=%d from=%s sender_chat=%d", m.Role, m.MessageID, m.Who(), m.SenderChatID)
+	if m.ReplyToMessageID > 0 {
+		h += fmt.Sprintf(" reply_to=%d", m.ReplyToMessageID)
+	}
+	h += "]"
+	if m.Quoted != "" {
+		h += " (quoted message " + m.Quoted + ")"
+	}
+	return h
 }
 
 // Who formats a sender for prompts: name, @username and the stable user ID.

@@ -83,3 +83,36 @@ func (e *Engine) enrichMedia(ctx context.Context, job queue.Job, history *agent.
 	}
 	return nil
 }
+
+// Describe handles a "media" job: an image posted without addressing the bot.
+// The description is stored in history for later replies and compaction; no
+// reply is sent.
+func (e *Engine) Describe(ctx context.Context, job queue.Job) error {
+	store := e.DB.Agent()
+	if err := store.Check(ctx, job.Scope, job.ActorUserID); err != nil {
+		return err
+	}
+	var payload agent.JobPayload
+	if err := json.Unmarshal(job.Payload, &payload); err != nil || payload.MessageID <= 0 {
+		return errors.New("invalid media job")
+	}
+	sender := e.Bots[job.Scope.BotID]
+	if sender == nil {
+		return errors.New("bot sender unavailable")
+	}
+	history, _, err := store.ReplyContext(ctx, job.Scope, payload.MessageID, 1)
+	if err != nil {
+		return err
+	}
+	// Only the target message: ReplyContext ends at it and limit 1 keeps it alone.
+	for i := range history.Messages {
+		if history.Messages[i].MessageID != payload.MessageID || history.Messages[i].UpdateID != payload.SourceUpdateID {
+			history.Messages = append(history.Messages[:i], history.Messages[i+1:]...)
+			break
+		}
+	}
+	if len(history.Messages) == 0 || history.Messages[0].MediaText != "" {
+		return nil
+	}
+	return e.enrichMedia(ctx, job, &history, sender)
+}
