@@ -18,9 +18,9 @@ func dueReminder(t *testing.T) (*Engine, *testModel, *testSender, *queue.Job) {
 	e, model, sender, scope := engineFixture(t)
 	ctx := context.Background()
 	// Reproduce the screenshot, including the earlier acknowledgement in history.
-	// The task itself is created through the create_task tool.
+	// The task itself is created through the task_create tool.
 	creator := &scriptedModel{reply: `{"reply":"Хорошо, я напомню тебе выпить воды через 5 минут."}`, turns: []llm.Message{
-		call("c1", toolCreateTask, `{"prompt":"Напомни мне выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`),
+		call("c1", toolTaskCreate, `{"prompt":"Напомни мне выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`),
 		finish("Task created; acknowledge briefly."),
 	}}
 	e.Model = creator
@@ -54,7 +54,7 @@ func TestScheduledExecutionModeAndNoReschedule(t *testing.T) {
 	// During scheduled execution the model tries to create another task; the
 	// mutating tools are not offered and a call to one is refused.
 	m := &scriptedModel{reply: `{"reply":"Пора выпить воды!"}`, turns: []llm.Message{
-		call("c1", toolCreateTask, `{"prompt":"unwanted repeat","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`),
+		call("c1", toolTaskCreate, `{"prompt":"unwanted repeat","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`),
 		finish("Reminder due."),
 	}}
 	e.Model = m
@@ -62,7 +62,7 @@ func TestScheduledExecutionModeAndNoReschedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, spec := range m.specs {
-		if spec.Function.Name == toolCreateTask || spec.Function.Name == toolSaveMemory {
+		if spec.Function.Name == toolTaskCreate || spec.Function.Name == toolMemorySave {
 			t.Fatal("scheduled execution offers task or memory mutation tools")
 		}
 	}

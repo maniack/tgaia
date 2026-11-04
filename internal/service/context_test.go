@@ -62,7 +62,7 @@ func TestSelfDescriptionComesFromConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	system := model.input[0].Content
-	for _, want := range []string{"Trusted self-description", `"model":"gemma-4-26B"`, "webtools", "no OAuth", "create_task", `"weekday":`} {
+	for _, want := range []string{"Trusted self-description", `"model":"gemma-4-26B"`, "webtools", "no OAuth", "task_create", `"weekday":`} {
 		if !strings.Contains(system, want) {
 			t.Fatalf("system prompt lacks %q", want)
 		}

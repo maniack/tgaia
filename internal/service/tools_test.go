@@ -190,7 +190,7 @@ func TestReActThinkingToolLoop(t *testing.T) {
 	if strings.Contains(f.seenSystemPrompt, "Output ONLY one JSON object") {
 		t.Fatal("tool phase system prompt should not contain respond.txt JSON envelope requirement")
 	}
-	if !strings.Contains(f.seenSystemPrompt, "finish_tool_phase") {
+	if !strings.Contains(f.seenSystemPrompt, "phase_finish") {
 		t.Fatal("tool phase system prompt should explain the structural tool phase")
 	}
 	// Verify final output restores the original respond.txt system prompt

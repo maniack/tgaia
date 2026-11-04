@@ -41,7 +41,7 @@ type toolOutcome struct {
 // job/bot/chat's records.
 //
 // The phase is structural: every model turn must be a tool call, and the
-// phase ends only with finish_tool_phase. The model therefore cannot write the
+// phase ends only with phase_finish. The model therefore cannot write the
 // user-facing answer here; that happens once, in the final closed-schema call.
 // requestedAt anchors relative delays ("in 5 minutes") to the moment the user
 // asked, not to when the worker got around to it.
@@ -108,7 +108,7 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 			if err := e.reserveModel(toolCtx, job, false); err != nil {
 				return outcome, queue.WithPhase(err, phase)
 			}
-			// Every turn is a call: a real tool or finish_tool_phase. A tighter
+			// Every turn is a call: a real tool or phase_finish. A tighter
 			// output budget keeps a wandering draft from costing minutes.
 			turnCtx := llm.WithToolChoice(llm.WithOutputBudget(toolCtx, e.Config.Limit("tool_output_tokens")), "required")
 			message, err = model.CompleteTools(turnCtx, input, specs)
@@ -145,7 +145,7 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 			}
 			key := fmt.Sprintf("call:%d:%d", round, i)
 			name := call.Function.Name
-			if name == toolFinish {
+			if name == toolPhaseFinish {
 				finished = true
 				input = append(input, llm.Message{Role: "tool", ToolCallID: call.ID, Content: `{"is_error":false,"content":"Tool phase closed."}`})
 				if note := finishNote(call.Function.Arguments); note != "" {

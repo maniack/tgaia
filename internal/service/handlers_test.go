@@ -136,7 +136,7 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 	e.Embedder = embedder
 	memory := "User 7 prefers concise answers in Russian."
 	saver := func(fact string) *scriptedModel {
-		return &scriptedModel{reply: `{"reply":"Запомнил."}`, turns: []llm.Message{call("c1", toolSaveMemory, `{"content":"`+fact+`"}`), finish("Saved.")}}
+		return &scriptedModel{reply: `{"reply":"Запомнил."}`, turns: []llm.Message{call("c1", toolMemorySave, `{"content":"`+fact+`"}`), finish("Saved.")}}
 	}
 	e.Model = saver(memory)
 	accept(t, e, scope, 1, "Запомни: я предпочитаю короткие ответы на русском", true)
@@ -202,7 +202,7 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 	}
 
 	// Forgetting is a tool too, scoped to the author's own facts.
-	e.Model = &scriptedModel{reply: `{"reply":"Забыл."}`, turns: []llm.Message{call("c1", toolDeleteMemory, `{"source_message_id":1}`), finish("Deleted.")}}
+	e.Model = &scriptedModel{reply: `{"reply":"Забыл."}`, turns: []llm.Message{call("c1", toolMemoryDelete, `{"source_message_id":1}`), finish("Deleted.")}}
 	accept(t, e, scope, 4, "Забудь про короткие ответы", true)
 	job = take(t, e, "respond")
 	if err := e.Respond(ctx, *job); err != nil {
@@ -210,7 +210,7 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 	}
 	stored, err = e.DB.Agent().Context(ctx, scope, 0, 30)
 	if err != nil || len(stored.ExplicitMemories) != 1 || stored.ExplicitMemories[0].Content != otherMemory {
-		t.Fatalf("delete_memory removed the wrong fact: %+v, %v", stored.ExplicitMemories, err)
+		t.Fatalf("memory_delete removed the wrong fact: %+v, %v", stored.ExplicitMemories, err)
 	}
 }
 func TestUncertainSendNotDuplicated(t *testing.T) {

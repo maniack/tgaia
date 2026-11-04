@@ -149,7 +149,7 @@ func (f *thinkingFixture) CompleteTools(_ context.Context, in []llm.Message, _ [
 	if in[len(in)-1].Role == "tool" {
 		return llm.Message{Role: "assistant", ReasoningContent: "Thought: done.", Content: "Thought: the task is created. Internal note: answer briefly."}, nil
 	}
-	return llm.Message{Role: "assistant", ReasoningContent: "Thought: schedule it.", ToolCalls: []llm.ToolCall{{ID: "c1", Type: "function", Function: llm.ToolFunction{Name: toolCreateTask, Arguments: `{"prompt":"Напомни пользователю выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`}}}}, nil
+	return llm.Message{Role: "assistant", ReasoningContent: "Thought: schedule it.", ToolCalls: []llm.ToolCall{{ID: "c1", Type: "function", Function: llm.ToolFunction{Name: toolTaskCreate, Arguments: `{"prompt":"Напомни пользователю выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`}}}}, nil
 }
 
 // A tool-phase text turn is an internal note. Only the closed-schema reply

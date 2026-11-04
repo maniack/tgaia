@@ -62,7 +62,7 @@ func TestPromptIdentifiesParticipants(t *testing.T) {
 	}
 }
 
-// "Every Thursday at 19:00 Moscow time" is passed to create_task as words; the
+// "Every Thursday at 19:00 Moscow time" is passed to task_create as words; the
 // scheduler computes the instant, stores it and tells the user exactly that.
 func TestWeekdayScheduleIsComputedByCode(t *testing.T) {
 	e, _, sender, scope := engineFixture(t)
@@ -70,7 +70,7 @@ func TestWeekdayScheduleIsComputedByCode(t *testing.T) {
 	now := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC) // Wednesday.
 	e.Now = func() time.Time { return now }
 	m := &scriptedModel{reply: `{"reply":"Запланировал тост."}`, turns: []llm.Message{
-		call("c1", toolCreateTask, `{"prompt":"Напиши тост для команды","when":{"date":"","weekday":"thursday","time":"19:00","timezone":"Europe/Moscow","delay_seconds":0},"interval_seconds":604800}`),
+		call("c1", toolTaskCreate, `{"prompt":"Напиши тост для команды","when":{"date":"","weekday":"thursday","time":"19:00","timezone":"Europe/Moscow","delay_seconds":0},"interval_seconds":604800}`),
 		finish("Weekly task created."),
 	}}
 	e.Model = m
@@ -174,10 +174,10 @@ func TestFinalCallKeepsProtocolWhenToolsAreAvailable(t *testing.T) {
 	if err := e.Respond(context.Background(), *job); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.finalSystem, "Output ONLY one JSON object") || !strings.Contains(f.finalSystem, "create_task") || strings.Contains(f.finalSystem, "finish_tool_phase with a note") {
+	if !strings.Contains(f.finalSystem, "Output ONLY one JSON object") || !strings.Contains(f.finalSystem, "task_create") || strings.Contains(f.finalSystem, "phase_finish with a note") {
 		t.Fatal("final call lost the response protocol or kept tool-phase guidance")
 	}
-	if !strings.Contains(f.toolSystem, "finish_tool_phase") || !strings.Contains(f.toolSystem, "call create_task with the time exactly as the user said it") {
+	if !strings.Contains(f.toolSystem, "phase_finish") || !strings.Contains(f.toolSystem, "call task_create with the time exactly as the user said it") {
 		t.Fatal("tool phase does not know that scheduling and memory are tools")
 	}
 	if f.turnBudget != e.Config.Limit("tool_output_tokens") {

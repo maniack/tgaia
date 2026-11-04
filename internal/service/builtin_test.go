@@ -29,7 +29,9 @@ type scriptedModel struct {
 func call(id, name, args string) llm.Message {
 	return llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: id, Type: "function", Function: llm.ToolFunction{Name: name, Arguments: args}}}}
 }
-func finish(note string) llm.Message { return call("finish", toolFinish, `{"note":`+quote(note)+`}`) }
+func finish(note string) llm.Message {
+	return call("finish", toolPhaseFinish, `{"note":`+quote(note)+`}`)
+}
 func quote(s string) string {
 	data, _ := json.Marshal(s)
 	return string(data)
@@ -56,12 +58,12 @@ func (m *scriptedModel) CompleteTools(ctx context.Context, in []llm.Message, spe
 }
 
 // Without any MCP server the built-in tools are still offered, every turn
-// demands a call, and finish_tool_phase closes the phase with a bounded note.
+// demands a call, and phase_finish closes the phase with a bounded note.
 func TestBuiltinToolsWithoutMCP(t *testing.T) {
 	e, _, sender, scope := engineFixture(t)
 	ctx := context.Background()
 	long := strings.Repeat("draft of the whole answer ", 40)
-	m := &scriptedModel{reply: `{"reply":"У тебя нет задач."}`, turns: []llm.Message{call("c1", toolListTasks, `{}`), finish(long)}}
+	m := &scriptedModel{reply: `{"reply":"У тебя нет задач."}`, turns: []llm.Message{call("c1", toolTaskList, `{}`), finish(long)}}
 	e.Model = m
 	accept(t, e, scope, 1, "какие у меня задачи?", true)
 	job := take(t, e, "respond")
@@ -80,13 +82,13 @@ func TestBuiltinToolsWithoutMCP(t *testing.T) {
 	for _, spec := range m.specs {
 		names[spec.Function.Name] = true
 	}
-	for _, want := range []string{toolFinish, toolListTasks, toolCreateTask, toolUpdateTask, toolDeleteTask, toolListMemories, toolSaveMemory, toolDeleteMemory} {
+	for _, want := range []string{toolPhaseFinish, toolTaskList, toolTaskCreate, toolTaskUpdate, toolTaskDelete, toolMemoryList, toolMemorySave, toolMemoryDelete} {
 		if !names[want] {
 			t.Fatalf("built-in tool %s not offered: %v", want, names)
 		}
 	}
 	if !strings.Contains(m.toolInputs[1][len(m.toolInputs[1])-1].Content, `"tasks":[]`) {
-		t.Fatalf("list_tasks result missing: %s", m.toolInputs[1][len(m.toolInputs[1])-1].Content)
+		t.Fatalf("task_list result missing: %s", m.toolInputs[1][len(m.toolInputs[1])-1].Content)
 	}
 	final := m.finalInput
 	note := final[len(final)-2]
@@ -124,9 +126,9 @@ func TestTaskToolsRespectOwnershipAndQuota(t *testing.T) {
 	e.Now = func() time.Time { return time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC) }
 	e.Config.Limits = map[string]string{"active_tasks_per_user": "1"}
 	create := func(id string) llm.Message {
-		return call(id, toolCreateTask, `{"prompt":"task `+id+`","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":3600},"interval_seconds":0}`)
+		return call(id, toolTaskCreate, `{"prompt":"task `+id+`","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":3600},"interval_seconds":0}`)
 	}
-	m := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{create("c1"), create("c2"), call("c3", toolListTasks, `{}`), finish("done")}}
+	m := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{create("c1"), create("c2"), call("c3", toolTaskList, `{}`), finish("done")}}
 	e.Model = m
 	accept(t, e, scope, 1, "два напоминания", true)
 	job := take(t, e, "respond")
@@ -139,7 +141,7 @@ func TestTaskToolsRespectOwnershipAndQuota(t *testing.T) {
 	}
 	listed := m.toolInputs[3][len(m.toolInputs[3])-1].Content
 	if !strings.Contains(listed, `"mine":true`) || strings.Count(listed, `"id":"job-`) != 1 {
-		t.Fatalf("list_tasks: %s", listed)
+		t.Fatalf("task_list: %s", listed)
 	}
 	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
 		t.Fatal(err)
@@ -150,7 +152,7 @@ func TestTaskToolsRespectOwnershipAndQuota(t *testing.T) {
 	}
 	id := d.Tasks[0].ID
 	// Another user in the same chat cannot touch it; the owner can pause it.
-	other := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{call("c1", toolDeleteTask, `{"id":"`+id+`"}`), finish("x")}}
+	other := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{call("c1", toolTaskDelete, `{"id":"`+id+`"}`), finish("x")}}
 	e.Model = other
 	if err := e.DB.Agent().Accept(ctx, incomingFrom(scope, 2, 8, "удали задачу")); err != nil {
 		t.Fatal(err)
@@ -165,7 +167,7 @@ func TestTaskToolsRespectOwnershipAndQuota(t *testing.T) {
 	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
 		t.Fatal(err)
 	}
-	owner := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{call("c1", toolUpdateTask, `{"id":"`+id+`","prompt":null,"when":null,"interval_seconds":null,"active":false}`), finish("x")}}
+	owner := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{call("c1", toolTaskUpdate, `{"id":"`+id+`","prompt":null,"when":null,"interval_seconds":null,"active":false}`), finish("x")}}
 	e.Model = owner
 	accept(t, e, scope, 3, "поставь на паузу", true)
 	job = take(t, e, "respond")
@@ -178,10 +180,10 @@ func TestTaskToolsRespectOwnershipAndQuota(t *testing.T) {
 	}
 }
 
-// Secrets are refused by save_memory even if the model tries.
+// Secrets are refused by memory_save even if the model tries.
 func TestSaveMemoryRefusesSecrets(t *testing.T) {
 	e, _, _, scope := engineFixture(t)
-	m := &scriptedModel{reply: `{"reply":"Нет."}`, turns: []llm.Message{call("c1", toolSaveMemory, `{"content":"API key of user 7: sk-abc"}`), finish("refused")}}
+	m := &scriptedModel{reply: `{"reply":"Нет."}`, turns: []llm.Message{call("c1", toolMemorySave, `{"content":"API key of user 7: sk-abc"}`), finish("refused")}}
 	e.Model = m
 	accept(t, e, scope, 1, "запомни мой ключ sk-abc", true)
 	job := take(t, e, "respond")

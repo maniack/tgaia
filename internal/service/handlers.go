@@ -635,8 +635,8 @@ func (e *Engine) capabilities() string {
 	manifest := map[string]any{
 		"software":       "tgaia, an open-source Telegram agent written in Go (github.com/maniack/tgaia)",
 		"model":          e.Config.LLMModel,
-		"memory":         "per-chat conversation history, a periodically compacted long-term summary, and facts users explicitly asked to remember (tools list_memories/save_memory/delete_memory)",
-		"scheduler":      "one-time and fixed-interval tasks per chat (tools list_tasks/create_task/update_task/delete_task); no calendar rules yet",
+		"memory":         "per-chat conversation history, a periodically compacted long-term summary, and facts users explicitly asked to remember (tools memory_list/memory_save/memory_delete)",
+		"scheduler":      "one-time and fixed-interval tasks per chat (tools task_list/task_create/task_update/task_delete); no calendar rules yet",
 		"images":         "images in the chat are described by the model and the description is kept in history",
 		"external_tools": "MCP servers configured by the administrator: " + strings.Join(servers, ", "),
 		"not_available":  "no OAuth or account integrations (no Gmail, Notion, GitHub, Jira access unless an MCP server provides it), no audio or video recognition, no access to its own source code, configuration, secrets or infrastructure, no messages to other chats, no changes to permissions",

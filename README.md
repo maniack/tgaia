@@ -89,14 +89,14 @@ all bots/chats of its agent. The UI also supports chat blocks, task CRUD, knowle
 settings, bot prompts and queued edit/delete actions for known bot message IDs.
 
 Everything the bot does for itself goes through built-in tools in the tool phase:
-`list_tasks`/`create_task`/`update_task`/`delete_task` for scheduled and recurring
-tasks and `list_memories`/`save_memory`/`delete_memory` for explicit facts. The
-final model call can only write the reply text. `create_task` takes the user's words
+`task_list`/`task_create`/`task_update`/`task_delete` for scheduled and recurring
+tasks and `memory_list`/`memory_save`/`memory_delete` for explicit facts. The
+final model call can only write the reply text. `task_create` takes the user's words
 (weekday or date, wall-clock time, IANA timezone, or a relative delay); the code
 computes the first run, returns it to the model and appends the same computed time to
 the delivered reply, so the user never sees a time the model worked out itself. The
 tool phase is structural: every turn is a function call (`tool_choice: required`) and
-ends with `finish_tool_phase(note ≤ 300 chars)`, so the answer is generated once.
+ends with `phase_finish(note ≤ 300 chars)`, so the answer is generated once.
 Explicit requests such as “remember that …” are persisted with the application's
 current conversation scope; the model cannot select another bot or chat. Set `app.memory.embedding_model: bge-m3` (or
 `TGAIA_MEMORY_EMBEDDING_MODEL`) to use the configured OpenAI-compatible LLM endpoint
