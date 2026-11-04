@@ -88,15 +88,22 @@ memory keys include `(agent_id, bot_id, chat_id, thread_id)`. A blocked user ID 
 all bots/chats of its agent. The UI also supports chat blocks, task CRUD, knowledge,
 settings, bot prompts and queued edit/delete actions for known bot message IDs.
 
-Explicit requests such as “remember that …” are represented as a structured model
-action and persisted with the application's current conversation scope; the model
-cannot select another bot or chat. Set `app.memory.embedding_model: bge-m3` (or
+Everything the bot does for itself goes through built-in tools in the tool phase:
+`list_tasks`/`create_task`/`update_task`/`delete_task` for scheduled and recurring
+tasks and `list_memories`/`save_memory`/`delete_memory` for explicit facts. The
+final model call can only write the reply text. `create_task` takes the user's words
+(weekday or date, wall-clock time, IANA timezone, or a relative delay); the code
+computes the first run, returns it to the model and appends the same computed time to
+the delivered reply, so the user never sees a time the model worked out itself. The
+tool phase is structural: every turn is a function call (`tool_choice: required`) and
+ends with `finish_tool_phase(note ≤ 300 chars)`, so the answer is generated once.
+Explicit requests such as “remember that …” are persisted with the application's
+current conversation scope; the model cannot select another bot or chat. Set `app.memory.embedding_model: bge-m3` (or
 `TGAIA_MEMORY_EMBEDDING_MODEL`) to use the configured OpenAI-compatible LLM endpoint
 and key for embeddings. Later requests use cosine similarity over only the current
 bot/chat (all of its topics), merge the top semantic matches with recent memories, and pass at most
 16 KB to the response model. No pgvector extension is required. Reader-only and
-anonymous senders cannot add memories, and editing the source request invalidates its
-old stored fact before regeneration. Changing the embedding model does not mix vector
+anonymous senders cannot add memories; a user can forget only their own facts. Changing the embedding model does not mix vector
 spaces; old records remain available as recent memory but require regeneration before
 they participate in semantic ranking.
 

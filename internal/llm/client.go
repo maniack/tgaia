@@ -474,3 +474,9 @@ func OutputBudget(ctx context.Context) int {
 func WithToolChoice(ctx context.Context, choice string) context.Context {
 	return context.WithValue(ctx, toolChoiceKey{}, choice)
 }
+
+// ToolChoice returns the tool_choice override carried by ctx, or "".
+func ToolChoice(ctx context.Context) string {
+	choice, _ := ctx.Value(toolChoiceKey{}).(string)
+	return choice
+}

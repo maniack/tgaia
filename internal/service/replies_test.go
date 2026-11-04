@@ -32,7 +32,7 @@ func TestEditedReplyReusesMessages(t *testing.T) {
 	e.Bots[1] = sender
 	accept(t, e, scope, 1, "original", true)
 	setReply := func(text string) {
-		raw, _ := json.Marshal(map[string]any{"reply": text, "schedule": nil})
+		raw, _ := json.Marshal(map[string]any{"reply": text})
 		m.reply = string(raw)
 	}
 	setReply(strings.Repeat("a", 3600))
@@ -76,7 +76,7 @@ func TestEditedReplyReusesMessages(t *testing.T) {
 	if err != nil || len(links) != 2 || links[1].MessageID != 10003 {
 		t.Fatal("extended links", links, err)
 	}
-	if !strings.Contains(m.input[0].Content, "Do not repeat tools") {
+	if !strings.Contains(m.input[0].Content, "Tools are unavailable in this revision") {
 		t.Fatal("missing edit execution policy")
 	}
 	other := scope

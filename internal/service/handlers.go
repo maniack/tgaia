@@ -47,38 +47,27 @@ type Engine struct {
 	Embedder          MemoryEmbedder
 	Bots              map[int64]Sender
 }
-type Schedule struct {
-	Prompt   string `json:"prompt"`
-	Delay    int64  `json:"delay_seconds"`
-	Interval int64  `json:"interval_seconds"`
-	// FirstRunAt is an absolute RFC 3339 time with offset ("2026-11-06T19:00:00+03:00").
-	// Models express "Thursday at 19:00 Moscow time" reliably as a timestamp,
-	// but not as seconds from now; when set, it takes precedence over Delay.
-	FirstRunAt *string `json:"first_run_at"`
-}
 
-// runAt resolves the first execution time. requestedAt anchors relative delays.
-func (s Schedule) runAt(requestedAt time.Time) (time.Time, error) {
-	if s.FirstRunAt != nil && strings.TrimSpace(*s.FirstRunAt) != "" {
-		at, err := time.Parse(time.RFC3339, strings.TrimSpace(*s.FirstRunAt))
-		if err != nil {
-			return time.Time{}, errors.New("model schedule time invalid")
-		}
-		if at.Before(requestedAt.Add(-5*time.Minute)) || at.After(requestedAt.Add(366*24*time.Hour)) {
-			return time.Time{}, errors.New("model schedule time out of range")
-		}
-		if at.Before(requestedAt.Add(time.Minute)) {
-			at = requestedAt.Add(time.Minute)
-		}
-		return at.UTC(), nil
-	}
-	return requestedAt.Add(time.Duration(s.Delay) * time.Second), nil
-}
-
+// Response is the model's final envelope. Everything else the bot does
+// (tasks, memory) happens through tools during the tool phase, so the final
+// call can only write text.
 type Response struct {
-	Reply    string    `json:"reply"`
-	Schedule *Schedule `json:"schedule"`
-	Remember *string   `json:"remember"`
+	Reply string `json:"reply"`
+}
+
+// storedResult is the durable per-job outcome: the reply plus the scheduler's
+// own description of any task created in this job. The footer built from it
+// is code-generated, so the user always sees the time that was stored.
+type storedResult struct {
+	Reply         string   `json:"reply"`
+	Confirmations []string `json:"confirmations,omitempty"`
+}
+
+func (r storedResult) text() string {
+	if len(r.Confirmations) == 0 {
+		return r.Reply
+	}
+	return r.Reply + "\n\n⏰ " + strings.Join(r.Confirmations, "\n⏰ ")
 }
 
 func decodeResponse(text string) (Response, error) {
@@ -94,37 +83,12 @@ func decodeResponse(text string) (Response, error) {
 	if r.Reply == "" || len(r.Reply) > replyLimit {
 		return r, errors.New("model reply size invalid")
 	}
-	if err := validateMetadata(&r); err != nil {
-		return r, err
-	}
 	return r, nil
 }
 
 // replyLimit bounds a stored reply. Long answers are delivered as documents, so
 // the limit is a safety ceiling rather than a Telegram message size.
 const replyLimit = 64000
-
-func validateMetadata(r *Response) error {
-	if s := r.Schedule; s != nil {
-		absolute := s.FirstRunAt != nil && strings.TrimSpace(*s.FirstRunAt) != ""
-		if s.Prompt == "" || len(s.Prompt) > 16000 || (!absolute && (s.Delay < 60 || s.Delay > 31536000)) || (absolute && (s.Delay < 0 || s.Delay > 31536000)) || (s.Interval != 0 && s.Interval < 60) || s.Interval > 31536000 {
-			return errors.New("model schedule invalid")
-		}
-		if absolute {
-			if _, err := s.runAt(time.Now()); err != nil {
-				return err
-			}
-		}
-	}
-	if r.Remember != nil {
-		value := strings.TrimSpace(*r.Remember)
-		if value == "" || len(value) > 2000 {
-			return errors.New("model memory invalid")
-		}
-		r.Remember = &value
-	}
-	return nil
-}
 
 func (e *Engine) Handlers() map[string]queue.Handler {
 	return map[string]queue.Handler{"respond": e.Respond, "compact": e.Compact, "message_action": e.MessageAction}
@@ -225,7 +189,7 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 	if stored == "" {
 		stopTyping := e.startTyping(ctx, job, sender)
 		defer stopTyping()
-		history, _, err := store.ReplyContext(ctx, job.Scope, payload.MessageID, e.Config.Limit("reply_messages"))
+		history, requestedAt, err := store.ReplyContext(ctx, job.Scope, payload.MessageID, e.Config.Limit("reply_messages"))
 		if err != nil {
 			return err
 		}
@@ -275,23 +239,23 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		}
 		system := string(prompt) + "\nBot administrator instructions:\n" + botPrompt + e.runtimeContext(job.Scope.BotID)
 		schemaPath := "prompts/response.schema.json"
+		var tools toolOutcome
 		if reader {
-			system += "\nThis sender has reader-only access (or a hidden identity). Reply only: tools and scheduled task creation are disabled. Never promise to create a task. Set schedule to null."
-			schemaPath = "prompts/scheduled.schema.json"
+			system += "\nThis sender has reader-only access (or a hidden identity). Reply only: tools, scheduled tasks and memory are disabled for them. Never promise to create a task or remember anything."
 		}
 		if payload.Prompt != "" {
 			mode, _ := prompts.ReadFile("prompts/scheduled.txt")
 			system += "\nExecution mode (takes precedence over scheduling instructions above):\n" + string(mode)
-			schemaPath = "prompts/scheduled.schema.json"
 		}
 		request := []llm.Message{{Role: "system", Content: system}, {Role: "user", Content: input}}
 		if rewrite {
-			request[0].Content += "\nThe user edited the source message. Revise your previous answer; it will replace the existing bot reply. Do not repeat tools or schedule creation, and do not claim previous external actions were undone. Set schedule to null. If the edited message explicitly asks to remember something, set remember to the updated standalone fact; otherwise set remember to null."
+			request[0].Content += "\nThe user edited the source message. Revise your previous answer; it will replace the existing bot reply. Tools are unavailable in this revision: do not repeat or undo earlier actions, and do not claim anything was scheduled, remembered or undone now."
 		} else {
-			request, err = e.toolContext(ctx, job, request)
-		}
-		if err != nil {
-			return err
+			tools, err = e.toolContext(ctx, job, payload, requestedAt, request)
+			if err != nil {
+				return err
+			}
+			request = tools.Messages
 		}
 		// The user-facing reply always comes from this closed-schema call. The
 		// streamed response survives long generations; the schema keeps model
@@ -314,56 +278,20 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		if err != nil {
 			return queue.WithPhase(err, "final")
 		}
-		if payload.Prompt != "" || reader {
-			response.Remember = nil
-		}
-		if payload.Prompt != "" || reader || rewrite {
-			response.Schedule = nil
-		}
-		data, _ := json.Marshal(response)
+		data, _ := json.Marshal(storedResult{Reply: response.Reply, Confirmations: tools.Confirmations})
 		stored = string(data)
 		stopTyping()
 		if err := store.SaveResult(ctx, job, stored); err != nil {
 			return err
 		}
 	}
-	response, err := decodeResponse(stored)
-	if err != nil {
-		return err
+	var result storedResult
+	if err := json.Unmarshal([]byte(stored), &result); err != nil || result.Reply == "" {
+		return errors.New("invalid stored result")
 	}
-	if payload.Prompt != "" || reader {
-		response.Remember = nil
-	}
-	if payload.Prompt == "" && job.ActorUserID > 0 && (response.Remember != nil || payload.Edited) {
-		embeddingModel := ""
-		var embedding []float32
-		if response.Remember != nil && e.Embedder != nil {
-			embeddingModel = e.Embedder.Model()
-			embedding, err = e.Embedder.Embed(ctx, *response.Remember)
-			if err != nil {
-				return queue.WithPhase(err, "embed")
-			}
-		}
-		if err := store.ApplyExplicitMemory(ctx, job, payload.MessageID, payload.SourceUpdateID, response.Remember, embeddingModel, embedding); err != nil {
-			return err
-		}
-	}
-	if s := response.Schedule; s != nil && payload.Prompt == "" && !reader && !rewrite {
-		_, requestedAt, err := store.ReplyContext(ctx, job.Scope, payload.MessageID, e.Config.Limit("reply_messages"))
-		if err != nil {
-			return err
-		}
-		runAt, err := s.runAt(requestedAt)
-		if err != nil {
-			return queue.WithPhase(err, "final")
-		}
-		task := agent.Task{ID: fmt.Sprintf("job-%d", job.ID), AgentID: job.Scope.AgentID, BotID: job.Scope.BotID, ChatID: job.Scope.ChatID, ThreadID: job.Scope.ThreadID, UserID: job.ActorUserID, Prompt: s.Prompt, RunAt: runAt.UnixMilli(), IntervalMS: s.Interval * 1000, Active: true}
-		if err := store.PutTask(ctx, task, 0, e.Config.Limit("active_tasks_per_user")); err != nil {
-			return err
-		}
-	}
+	text := result.text()
 	_, documents := sender.(DocumentSender)
-	pieces := plan(response.Reply, documents)
+	pieces := plan(text, documents)
 	fallback, err := e.deliver(ctx, job, payload, sender, prior, rewrite, pieces)
 	if err != nil {
 		return err
@@ -371,7 +299,7 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 	if fallback {
 		// Telegram refused the document (for example, no media permission in the
 		// group). Nothing was sent, so multipart text is delivered instead.
-		pieces = plan(response.Reply, false)
+		pieces = plan(text, false)
 		if _, err := e.deliver(ctx, job, payload, sender, prior, rewrite, pieces); err != nil {
 			return err
 		}
@@ -690,6 +618,6 @@ func (e *Engine) runtimeContext(botID int64) string {
 		now = e.Now()
 	}
 	identity := e.Identities[botID]
-	metadata, _ := json.Marshal(map[string]any{"bot_id": botID, "name": identity.Name, "username": identity.Username, "current_time": now.UTC().Format(time.RFC3339), "timezone": "UTC"})
-	return "\nTrusted runtime facts (current at generation time; do not use dates or bot identities from old chat history instead):\n" + string(metadata) + "\nAn empty name means it is unavailable; do not invent it. Ask for the user's timezone when local scheduling is ambiguous."
+	metadata, _ := json.Marshal(map[string]any{"bot_id": botID, "name": identity.Name, "username": identity.Username, "current_time": now.UTC().Format(time.RFC3339), "weekday": now.UTC().Weekday().String(), "timezone": "UTC"})
+	return "\nTrusted runtime facts (current at generation time; do not use dates or bot identities from old chat history instead):\n" + string(metadata) + "\nAn empty name means it is unavailable; do not invent it. The date and weekday above are authoritative; never look them up. Ask for the user's timezone when local scheduling is ambiguous."
 }

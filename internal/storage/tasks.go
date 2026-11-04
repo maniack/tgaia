@@ -261,3 +261,34 @@ func (a *AgentStore) Knowledge(ctx context.Context, agentID string) (string, int
 	}
 	return row.Content, row.Version, nil
 }
+
+// Tasks lists the scheduled tasks of one chat scope, soonest first. Tools show
+// them to the model so it reports what is stored, not what it remembers saying.
+func (a *AgentStore) Tasks(ctx context.Context, s chat.Scope) ([]agent.Task, error) {
+	if !s.Valid() {
+		return nil, errors.New("invalid task scope")
+	}
+	var tasks []agent.Task
+	if err := scoped(a.db.WithContext(ctx).Table("scheduled_tasks"), s).Where("thread_id=?", s.ThreadID).Order("active DESC,run_at,id").Limit(100).Find(&tasks).Error; err != nil {
+		return nil, errors.New("listing tasks failed")
+	}
+	return tasks, nil
+}
+
+// Task reads one task of a chat scope. Other chats' tasks are invisible even by ID.
+func (a *AgentStore) Task(ctx context.Context, s chat.Scope, id string) (agent.Task, error) {
+	var task agent.Task
+	if !s.Valid() || id == "" {
+		return task, errors.New("invalid task scope")
+	}
+	err := scoped(a.db.WithContext(ctx).Table("scheduled_tasks"), s).Where("thread_id=? AND id=?", s.ThreadID, id).Take(&task).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return task, ErrTaskNotFound
+	}
+	if err != nil {
+		return task, errors.New("reading task failed")
+	}
+	return task, nil
+}
+
+var ErrTaskNotFound = errors.New("task not found")

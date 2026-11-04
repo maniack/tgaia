@@ -19,7 +19,7 @@ func TestReaderCannotActAndPromotionIsLive(t *testing.T) {
 	}
 	f := &toolFixture{}
 	e.Tools = f
-	m.reply = `{"reply":"read-only answer","schedule":{"prompt":"forbidden","delay_seconds":60,"interval_seconds":0},"remember":"forbidden memory"}`
+	m.reply = `{"reply":"read-only answer"}`
 	accept(t, e, sc, 2, "do something", true)
 	j := take(t, e, "respond")
 	if err := e.Respond(ctx, *j); err != nil {

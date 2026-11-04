@@ -62,12 +62,18 @@ func TestPromptIdentifiesParticipants(t *testing.T) {
 	}
 }
 
-func TestScheduleAcceptsAbsoluteFirstRun(t *testing.T) {
-	e, model, _, scope := engineFixture(t)
+// "Every Thursday at 19:00 Moscow time" is passed to create_task as words; the
+// scheduler computes the instant, stores it and tells the user exactly that.
+func TestWeekdayScheduleIsComputedByCode(t *testing.T) {
+	e, _, sender, scope := engineFixture(t)
 	ctx := context.Background()
-	first := time.Now().Add(49 * time.Hour).Truncate(time.Hour).In(time.FixedZone("MSK", 3*3600))
-	raw, _ := json.Marshal(map[string]any{"reply": "Запланировал тост на четверг, 19:00 МСК.", "schedule": map[string]any{"prompt": "Напиши тост для команды", "first_run_at": first.Format(time.RFC3339), "delay_seconds": 0, "interval_seconds": 604800}, "remember": nil})
-	model.reply = string(raw)
+	now := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC) // Wednesday.
+	e.Now = func() time.Time { return now }
+	m := &scriptedModel{reply: `{"reply":"Запланировал тост."}`, turns: []llm.Message{
+		call("c1", toolCreateTask, `{"prompt":"Напиши тост для команды","when":{"date":"","weekday":"thursday","time":"19:00","timezone":"Europe/Moscow","delay_seconds":0},"interval_seconds":604800}`),
+		finish("Weekly task created."),
+	}}
+	e.Model = m
 	accept(t, e, scope, 1, "запланируй каждый четверг в 19 по МСК тост", true)
 	job := take(t, e, "respond")
 	if err := e.Respond(ctx, *job); err != nil {
@@ -77,18 +83,55 @@ func TestScheduleAcceptsAbsoluteFirstRun(t *testing.T) {
 	if err != nil || len(d.Tasks) != 1 {
 		t.Fatal("weekly task not created", err)
 	}
-	if d.Tasks[0].RunAt != first.UnixMilli() || d.Tasks[0].IntervalMS != 604800*1000 {
-		t.Fatalf("absolute first run not honored: run_at=%d want %d interval=%d", d.Tasks[0].RunAt, first.UnixMilli(), d.Tasks[0].IntervalMS)
+	want := time.Date(2026, 11, 5, 16, 0, 0, 0, time.UTC) // Thursday 19:00 MSK.
+	if d.Tasks[0].RunAt != want.UnixMilli() || d.Tasks[0].IntervalMS != 604800*1000 {
+		t.Fatalf("run_at=%s want %s interval=%d", time.UnixMilli(d.Tasks[0].RunAt).UTC(), want, d.Tasks[0].IntervalMS)
 	}
-	// Out-of-range or malformed timestamps are rejected like any invalid schedule.
-	for _, bad := range []string{"next thursday", time.Now().Add(-2 * time.Hour).Format(time.RFC3339), time.Now().Add(400 * 24 * time.Hour).Format(time.RFC3339)} {
-		raw, _ := json.Marshal(map[string]any{"reply": "x", "schedule": map[string]any{"prompt": "p", "first_run_at": bad, "delay_seconds": 0, "interval_seconds": 0}, "remember": nil})
-		if _, err := decodeResponse(string(raw)); err == nil {
-			t.Fatalf("invalid first_run_at %q accepted", bad)
+	result := m.toolInputs[1][len(m.toolInputs[1])-1].Content
+	if !strings.Contains(result, "Thu 2026-11-05 19:00 (Europe/Moscow)") || !strings.Contains(result, "every week") {
+		t.Fatalf("tool result lacks the human-readable confirmation: %s", result)
+	}
+	if !strings.Contains(sender.last, "⏰ First run: Thu 2026-11-05 19:00 (Europe/Moscow), then every week.") {
+		t.Fatalf("delivered text lacks the code-generated confirmation: %q", sender.last)
+	}
+	if !strings.Contains(m.finalInput[len(m.finalInput)-1].Content, "do not recompute") {
+		t.Fatal("final call is not told to quote the computed time")
+	}
+}
+
+func TestWhenResolution(t *testing.T) {
+	now := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC) // Wednesday 13:00 MSK.
+	msk := func(d, h int) time.Time { return time.Date(2026, 11, d, h, 0, 0, 0, time.FixedZone("MSK", 3*3600)) }
+	cases := []struct {
+		when When
+		want time.Time
+	}{
+		{When{Weekday: "thursday", Time: "19:00", Timezone: "Europe/Moscow"}, msk(5, 19)},
+		{When{Weekday: "wednesday", Time: "19:00", Timezone: "Europe/Moscow"}, msk(4, 19)}, // Later today counts.
+		{When{Weekday: "wednesday", Time: "09:00", Timezone: "Europe/Moscow"}, msk(11, 9)}, // Earlier today rolls a week.
+		{When{Time: "09:00", Timezone: "Europe/Moscow"}, msk(5, 9)},
+		{When{Date: "2026-11-06", Time: "16:00", Timezone: "+03:00"}, msk(6, 16)},
+		{When{DelaySeconds: 300}, now.Add(5 * time.Minute)},
+	}
+	for _, c := range cases {
+		got, _, err := c.when.resolve(now)
+		if err != nil || !got.Equal(c.want) {
+			t.Fatalf("%+v: got %v (%v), want %v", c.when, got, err, c.want)
 		}
 	}
-	if _, err := decodeResponse(`{"reply":"x","schedule":{"prompt":"p","delay_seconds":300,"interval_seconds":0},"remember":null}`); err != nil {
-		t.Fatal("relative schedules must still work", err)
+	for _, bad := range []When{
+		{Weekday: "thursday", Time: "19:00"},                                                // No timezone.
+		{Weekday: "thursday", Timezone: "Europe/Moscow"},                                    // No time.
+		{Weekday: "thursday", Time: "19:00", Timezone: "MSK"},                               // Abbreviation.
+		{Date: "2026-11-06", Weekday: "thursday", Time: "16:00", Timezone: "Europe/Moscow"}, // Friday, not Thursday.
+		{Date: "2026-11-01", Time: "16:00", Timezone: "Europe/Moscow"},                      // Past.
+		{Date: "2027-12-01", Time: "16:00", Timezone: "Europe/Moscow"},                      // Too far.
+		{DelaySeconds: 10},
+		{Weekday: "thursday", Time: "19:00", Timezone: "Europe/Moscow", DelaySeconds: 60},
+	} {
+		if _, _, err := bad.resolve(now); err == nil {
+			t.Fatalf("%+v accepted", bad)
+		}
 	}
 }
 
@@ -110,7 +153,7 @@ func (f *notingFixture) Complete(context.Context, []llm.Message) (string, error)
 }
 func (f *notingFixture) CompleteJSON(_ context.Context, in []llm.Message, _ json.RawMessage) (string, error) {
 	f.finalSystem = in[0].Content
-	return `{"reply":"ok","schedule":null,"remember":null}`, nil
+	return `{"reply":"ok"}`, nil
 }
 func (f *notingFixture) CompleteTools(ctx context.Context, in []llm.Message, _ []llm.Tool) (llm.Message, error) {
 	f.toolSystem = in[0].Content
@@ -131,11 +174,11 @@ func TestFinalCallKeepsProtocolWhenToolsAreAvailable(t *testing.T) {
 	if err := e.Respond(context.Background(), *job); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.finalSystem, "Output ONLY one JSON object") || !strings.Contains(f.finalSystem, "first_run_at") || strings.Contains(f.finalSystem, "ReAct") {
+	if !strings.Contains(f.finalSystem, "Output ONLY one JSON object") || !strings.Contains(f.finalSystem, "create_task") || strings.Contains(f.finalSystem, "finish_tool_phase with a note") {
 		t.Fatal("final call lost the response protocol or kept tool-phase guidance")
 	}
-	if !strings.Contains(f.toolSystem, "are not tools and need no tool call") || !strings.Contains(f.toolSystem, "never tell the user that you lack a scheduler") {
-		t.Fatal("tool phase does not know that scheduling and memory exist")
+	if !strings.Contains(f.toolSystem, "finish_tool_phase") || !strings.Contains(f.toolSystem, "call create_task with the time exactly as the user said it") {
+		t.Fatal("tool phase does not know that scheduling and memory are tools")
 	}
 	if f.turnBudget != e.Config.Limit("tool_output_tokens") {
 		t.Fatalf("tool turn budget %d, want %d", f.turnBudget, e.Config.Limit("tool_output_tokens"))

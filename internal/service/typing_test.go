@@ -66,7 +66,7 @@ type waitTypingModel struct{ started <-chan struct{} }
 func (m waitTypingModel) Complete(ctx context.Context, _ []llm.Message) (string, error) {
 	select {
 	case <-m.started:
-		return `{"reply":"ready","schedule":null}`, nil
+		return `{"reply":"ready"}`, nil
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}

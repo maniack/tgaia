@@ -32,6 +32,7 @@ func (m *testModel) Complete(ctx context.Context, in []llm.Message) (string, err
 type testSender struct {
 	calls int
 	fail  bool
+	last  string
 }
 
 type testMemoryEmbedder struct{ calls int }
@@ -47,6 +48,7 @@ func (e *testMemoryEmbedder) Embed(_ context.Context, input string) ([]float32, 
 
 func (s *testSender) Send(ctx context.Context, chatID int64, text string) (int64, time.Time, error) {
 	s.calls++
+	s.last = text
 	if s.fail {
 		return 0, time.Time{}, errors.New("unknown external result")
 	}
@@ -73,7 +75,7 @@ func engineFixture(t *testing.T) (*Engine, *testModel, *testSender, chat.Scope) 
 	if err := os.WriteFile(promptFile, []byte("You are a personal assistant."), 0600); err != nil {
 		t.Fatal(err)
 	}
-	model := &testModel{reply: `{"reply":"test answer","schedule":null}`}
+	model := &testModel{reply: `{"reply":"test answer"}`}
 	sender := &testSender{}
 	return &Engine{DefaultPromptFile: promptFile, DB: db, Model: model, Bots: map[int64]Sender{1: sender, 2: sender}}, model, sender, chat.Scope{AgentID: "a", BotID: 1, ChatID: 100}
 }
@@ -133,7 +135,10 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 	embedder := &testMemoryEmbedder{}
 	e.Embedder = embedder
 	memory := "User 7 prefers concise answers in Russian."
-	model.reply = `{"reply":"Запомнил.","schedule":null,"remember":"` + memory + `"}`
+	saver := func(fact string) *scriptedModel {
+		return &scriptedModel{reply: `{"reply":"Запомнил."}`, turns: []llm.Message{call("c1", toolSaveMemory, `{"content":"`+fact+`"}`), finish("Saved.")}}
+	}
+	e.Model = saver(memory)
 	accept(t, e, scope, 1, "Запомни: я предпочитаю короткие ответы на русском", true)
 	job := take(t, e, "respond")
 	if err := e.Respond(ctx, *job); err != nil {
@@ -149,7 +154,7 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 	}
 
 	otherMemory := "User 7 enjoys hiking."
-	model.reply = `{"reply":"Запомнил.","schedule":null,"remember":"` + otherMemory + `"}`
+	e.Model = saver(otherMemory)
 	accept(t, e, scope, 2, "Remember that I enjoy hiking", true)
 	job = take(t, e, "respond")
 	if err := e.Respond(ctx, *job); err != nil {
@@ -159,7 +164,8 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	model.reply = `{"reply":"Коротко отвечать на русском.","schedule":null,"remember":null}`
+	e.Model = model
+	model.reply = `{"reply":"Коротко отвечать на русском."}`
 	accept(t, e, scope, 3, "Что ты помнишь о моих предпочтениях на русском?", true)
 	job = take(t, e, "respond")
 	if err := e.Respond(ctx, *job); err != nil {
@@ -195,17 +201,16 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 		t.Fatalf("explicit memory not shared across topics: %+v, %v", context.ExplicitMemories, err)
 	}
 
-	model.reply = `{"reply":"Исправил.","schedule":null,"remember":null}`
-	if err := e.DB.Agent().Accept(ctx, agent.Incoming{Scope: scope, MessageID: 1, UpdateID: 4, UserID: 7, Text: "Не запоминай это", Edited: true, Respond: true, SentAt: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
+	// Forgetting is a tool too, scoped to the author's own facts.
+	e.Model = &scriptedModel{reply: `{"reply":"Забыл."}`, turns: []llm.Message{call("c1", toolDeleteMemory, `{"source_message_id":1}`), finish("Deleted.")}}
+	accept(t, e, scope, 4, "Забудь про короткие ответы", true)
 	job = take(t, e, "respond")
 	if err := e.Respond(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
 	stored, err = e.DB.Agent().Context(ctx, scope, 0, 30)
 	if err != nil || len(stored.ExplicitMemories) != 1 || stored.ExplicitMemories[0].Content != otherMemory {
-		t.Fatalf("edited source retained stale or removed unrelated explicit memory: %+v, %v", stored.ExplicitMemories, err)
+		t.Fatalf("delete_memory removed the wrong fact: %+v, %v", stored.ExplicitMemories, err)
 	}
 }
 func TestUncertainSendNotDuplicated(t *testing.T) {
@@ -271,7 +276,7 @@ func TestCompactionContinuesAfterInputLimit(t *testing.T) {
 	}
 }
 func TestClosedModelSchema(t *testing.T) {
-	for _, text := range []string{`{"reply":"ok","scope":"other"}`, `{"reply":"ok","schedule":{"prompt":"x","delay_seconds":1,"interval_seconds":0}}`, `{"reply":"ok","schedule":null,"remember":""}`, `{"reply":"ok"} {"reply":"again"}`} {
+	for _, text := range []string{`{"reply":"ok","scope":"other"}`, `{"reply":"ok","schedule":{"prompt":"x","delay_seconds":1,"interval_seconds":0}}`, `{"reply":"ok","remember":"x"}`, `{"reply":""}`, `{"reply":"ok"} {"reply":"again"}`} {
 		if _, err := decodeResponse(text); err == nil {
 			t.Fatal("invalid model action accepted")
 		}

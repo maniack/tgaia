@@ -11,7 +11,7 @@ import (
 func TestResolvedMultipartDoesNotRepeatUncertainPart(t *testing.T) {
 	e, model, sender, sc := engineFixture(t)
 	ctx := context.Background()
-	model.reply = `{"reply":"` + strings.Repeat("a", 4000) + `","schedule":null}`
+	model.reply = `{"reply":"` + strings.Repeat("a", 4000) + `"}`
 	accept(t, e, sc, 1, "test", true)
 	job := take(t, e, "respond")
 	sender.fail = true

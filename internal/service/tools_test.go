@@ -5,7 +5,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/maniack/tgaia/internal/agent"
 	"github.com/maniack/tgaia/internal/chat"
 	"github.com/maniack/tgaia/internal/llm"
 	"github.com/maniack/tgaia/internal/mcpclient"
@@ -35,7 +37,7 @@ func (f *toolFixture) Call(context.Context, string, string) (string, error) {
 }
 func (f *toolFixture) Close() {}
 func (f *toolFixture) Complete(context.Context, []llm.Message) (string, error) {
-	return `{"reply":"answer","schedule":null}`, nil
+	return `{"reply":"answer"}`, nil
 }
 func (f *toolFixture) CompleteTools(_ context.Context, in []llm.Message, _ []llm.Tool) (llm.Message, error) {
 	f.plans++
@@ -54,11 +56,11 @@ func TestToolCheckpointsSurviveRetry(t *testing.T) {
 		job := take(t, e, "respond")
 		ctx := context.Background()
 		request := []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}
-		if _, err := e.toolContext(ctx, *job, request); err != nil {
+		if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request); err != nil {
 			t.Fatal(err)
 		}
 		plans := f.plans
-		if _, err := e.toolContext(ctx, *job, request); err != nil {
+		if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request); err != nil {
 			t.Fatal(err)
 		}
 		if f.calls != 1 || f.plans != plans {
@@ -81,7 +83,7 @@ func TestStartedToolNeverRepeated(t *testing.T) {
 	if _, err := e.DB.Agent().StartTool(ctx, *job, "call:0:0", `{"id":"c1","type":"function","function":{"name":"lookup","arguments":"{}"}}`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.toolContext(ctx, *job, []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}); err != nil {
+	if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}); err != nil {
 		t.Fatal(err)
 	}
 	if f.calls != 0 {
@@ -119,7 +121,7 @@ func (r *reactFixture) Call(_ context.Context, name, args string) (string, error
 }
 func (r *reactFixture) Close() {}
 func (r *reactFixture) Complete(context.Context, []llm.Message) (string, error) {
-	return `{"reply":"Complete answer","schedule":null}`, nil
+	return `{"reply":"Complete answer"}`, nil
 }
 func (r *reactFixture) CompleteTools(_ context.Context, in []llm.Message, _ []llm.Tool) (llm.Message, error) {
 	r.turns++
@@ -173,10 +175,11 @@ func TestReActThinkingToolLoop(t *testing.T) {
 	ctx := context.Background()
 	respondPrompt, _ := prompts.ReadFile("prompts/respond.txt")
 	request := []llm.Message{{Role: "system", Content: string(respondPrompt) + "\nBot administrator instructions:\nBe helpful"}, {Role: "user", Content: "find info about golang"}}
-	output, err := e.toolContext(ctx, *job, request)
+	outcome, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
+	output := outcome.Messages
 	if f.turns != 3 {
 		t.Fatalf("expected 3 turns in ReAct loop, got %d", f.turns)
 	}
@@ -187,8 +190,8 @@ func TestReActThinkingToolLoop(t *testing.T) {
 	if strings.Contains(f.seenSystemPrompt, "Output ONLY one JSON object") {
 		t.Fatal("tool phase system prompt should not contain respond.txt JSON envelope requirement")
 	}
-	if !strings.Contains(f.seenSystemPrompt, "ReAct") {
-		t.Fatal("tool phase system prompt should contain ReAct guidance")
+	if !strings.Contains(f.seenSystemPrompt, "finish_tool_phase") {
+		t.Fatal("tool phase system prompt should explain the structural tool phase")
 	}
 	// Verify final output restores the original respond.txt system prompt
 	if !strings.Contains(output[0].Content, "Output ONLY one JSON object") {

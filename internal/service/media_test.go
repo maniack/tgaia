@@ -21,7 +21,7 @@ func (m *visionFixture) Complete(_ context.Context, in []llm.Message) (string, e
 		return "A red square", nil
 	}
 	m.input = in
-	return `{"reply":"A red square","schedule":null}`, nil
+	return `{"reply":"A red square"}`, nil
 }
 
 type mediaSender struct {
@@ -76,7 +76,7 @@ func TestImageContextIdentityAndUTC(t *testing.T) {
 func TestAnonymousCannotSchedule(t *testing.T) {
 	e, m, _, sc := engineFixture(t)
 	ctx := context.Background()
-	m.reply = `{"reply":"text","schedule":{"prompt":"not allowed","delay_seconds":60,"interval_seconds":0}}`
+	m.reply = `{"reply":"text"}`
 	if err := e.DB.Agent().Accept(ctx, agent.Incoming{Scope: sc, MessageID: 1, UpdateID: 1, SenderChatID: -100, Text: "@bot remind", Respond: true, SentAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}

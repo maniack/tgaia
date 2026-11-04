@@ -2,12 +2,15 @@ package mcpclient
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/maniack/tgaia/internal/chat"
 	"github.com/maniack/tgaia/internal/config"
@@ -108,4 +111,28 @@ func TestStdioLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.Close()
+}
+
+// An oversized result keeps its beginning and says it is truncated; the old
+// behaviour (dropping it entirely) left the model with nothing but a refusal.
+func TestOversizedResultIsTruncatedNotDropped(t *testing.T) {
+	body := strings.Repeat("Полезный текст README. ", 2000)
+	out := truncateResult(false, []string{body}, 4000)
+	if len(out) > 4000 {
+		t.Fatalf("truncated result is %d bytes", len(out))
+	}
+	var r struct {
+		IsError   bool     `json:"is_error"`
+		Truncated bool     `json:"truncated"`
+		Content   []string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatal(err, out)
+	}
+	if r.IsError || !r.Truncated || len(r.Content) != 2 || !strings.HasPrefix(r.Content[0], "Полезный текст README.") || !strings.Contains(r.Content[1], "truncated") {
+		t.Fatalf("unexpected shape: %+v", r)
+	}
+	if !utf8.ValidString(r.Content[0]) {
+		t.Fatal("cut inside a UTF-8 sequence")
+	}
 }

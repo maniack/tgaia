@@ -93,7 +93,7 @@ func TestLongReplyDeliveredAsDocumentWithTextFallback(t *testing.T) {
 		sender := &documentSender{reject: reject}
 		e.Bots[1] = sender
 		code := strings.Repeat("let x = 1;\n", 500)
-		raw, _ := json.Marshal(map[string]any{"reply": "Готово:\n\n```js\n" + code + "```", "schedule": nil})
+		raw, _ := json.Marshal(map[string]any{"reply": "Готово:\n\n```js\n" + code + "```"})
 		m.reply = string(raw)
 		accept(t, e, scope, 1, "write code", true)
 		job := take(t, e, "respond")
@@ -142,11 +142,14 @@ func (f *thinkingFixture) CompleteJSON(_ context.Context, in []llm.Message, sche
 	f.finals++
 	f.lastFinal = in
 	f.lastSchema = string(schema)
-	return `{"reply":"Напомню через 5 минут.","schedule":{"prompt":"Напомни пользователю выпить воды сейчас","delay_seconds":300,"interval_seconds":0},"remember":null}`, nil
+	return `{"reply":"Напомню через 5 минут."}`, nil
 }
-func (f *thinkingFixture) CompleteTools(context.Context, []llm.Message, []llm.Tool) (llm.Message, error) {
+func (f *thinkingFixture) CompleteTools(_ context.Context, in []llm.Message, _ []llm.Tool) (llm.Message, error) {
 	f.turns++
-	return llm.Message{Role: "assistant", ReasoningContent: "Thought: no tool needed.", Content: "Thought: the user wants a reminder in five minutes. Internal note: answer briefly and schedule it."}, nil
+	if in[len(in)-1].Role == "tool" {
+		return llm.Message{Role: "assistant", ReasoningContent: "Thought: done.", Content: "Thought: the task is created. Internal note: answer briefly."}, nil
+	}
+	return llm.Message{Role: "assistant", ReasoningContent: "Thought: schedule it.", ToolCalls: []llm.ToolCall{{ID: "c1", Type: "function", Function: llm.ToolFunction{Name: toolCreateTask, Arguments: `{"prompt":"Напомни пользователю выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`}}}}, nil
 }
 
 // A tool-phase text turn is an internal note. Only the closed-schema reply
@@ -161,8 +164,8 @@ func TestToolPhaseThoughtsNeverReachTheUser(t *testing.T) {
 	if err := e.Respond(context.Background(), *job); err != nil {
 		t.Fatal(err)
 	}
-	if f.turns != 1 || f.finals != 1 || sender.calls != 1 {
-		t.Fatalf("expected one tool turn, one structured final call and one message, got %d/%d/%d", f.turns, f.finals, sender.calls)
+	if f.turns != 2 || f.finals != 1 || sender.calls != 1 {
+		t.Fatalf("expected two tool turns, one structured final call and one message, got %d/%d/%d", f.turns, f.finals, sender.calls)
 	}
 	if !strings.Contains(f.lastSchema, `"reply"`) || !strings.Contains(f.lastFinal[len(f.lastFinal)-1].Content, "Tool phase is finished") {
 		t.Fatal("final call must use the full response schema over the tool transcript")
@@ -173,7 +176,10 @@ func TestToolPhaseThoughtsNeverReachTheUser(t *testing.T) {
 	}
 	d, err := e.DB.Agent().Dashboard(context.Background())
 	if err != nil || len(d.Tasks) != 1 {
-		t.Fatal("schedule from the final call was not applied")
+		t.Fatal("task from the tool phase was not created")
+	}
+	if !strings.Contains(sender.last, "⏰ First run:") {
+		t.Fatalf("code-generated schedule confirmation missing from the delivered text: %q", sender.last)
 	}
 }
 

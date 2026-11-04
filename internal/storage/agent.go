@@ -579,3 +579,28 @@ func (a *AgentStore) SaveMediaText(ctx context.Context, job queue.Job, id, updat
 		return nil
 	})
 }
+
+// DeleteExplicitMemory removes one fact of this chat by its source message.
+// Only the author can delete their own fact through tools.
+func (a *AgentStore) DeleteExplicitMemory(ctx context.Context, job queue.Job, sourceMessageID int64) (bool, error) {
+	if sourceMessageID <= 0 || job.ActorUserID <= 0 {
+		return false, errors.New("invalid explicit memory source")
+	}
+	deleted := false
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := fence(tx, job); err != nil {
+			return err
+		}
+		store := &AgentStore{db: tx}
+		if err := store.CheckActions(ctx, job.Scope, job.ActorUserID); err != nil {
+			return err
+		}
+		result := memoryScoped(tx.Table("explicit_memories"), job.Scope).Where("source_message_id=? AND created_by=?", sourceMessageID, job.ActorUserID).Delete(&struct{}{})
+		if result.Error != nil {
+			return errors.New("deleting explicit memory failed")
+		}
+		deleted = result.RowsAffected > 0
+		return nil
+	})
+	return deleted, err
+}

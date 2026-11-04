@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/maniack/tgaia/internal/chat"
@@ -200,9 +201,41 @@ func (s *session) Call(ctx context.Context, name, args string) (string, error) {
 		return "", errors.New("invalid MCP result")
 	}
 	if len(data) > s.maxResult {
-		return `{"is_error":true,"content":["Tool completed, but its result exceeded the size limit and was omitted. Do not repeat the action."]}`, nil
+		return truncateResult(result.IsError, content, s.maxResult), nil
 	}
 	return string(data), nil
+}
+
+// truncateResult keeps the beginning of an oversized result instead of
+// dropping it: the first kilobytes of a page or file usually carry the
+// answer, and the model is told explicitly that the rest is missing.
+func truncateResult(isError bool, content []string, limit int) string {
+	const notice = "[truncated: the result exceeded the size limit; only its beginning is shown. Do not repeat the action.]"
+	joined := strings.Join(content, "\n")
+	budget := limit - len(notice) - 160 // JSON framing and escaping headroom.
+	if budget < 0 {
+		budget = 0
+	}
+	if len(joined) > budget {
+		joined = joined[:budget]
+		for !utf8.ValidString(joined) && len(joined) > 0 {
+			joined = joined[:len(joined)-1]
+		}
+	}
+	for {
+		data, _ := json.Marshal(map[string]any{"is_error": isError, "truncated": true, "content": []string{joined, notice}})
+		if len(data) <= limit || len(joined) == 0 {
+			return string(data)
+		}
+		cut := len(joined) - (len(data) - limit) - 16
+		if cut < 0 {
+			cut = 0
+		}
+		joined = joined[:cut]
+		for !utf8.ValidString(joined) && len(joined) > 0 {
+			joined = joined[:len(joined)-1]
+		}
+	}
 }
 
 type authenticatedTransport struct {
