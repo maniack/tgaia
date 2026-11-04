@@ -117,43 +117,43 @@ func TestLongReplyDeliveredAsDocumentWithTextFallback(t *testing.T) {
 }
 
 // singlePassFixture answers with plain text on the first tool turn and then
-// serves only the short metadata call.
-type singlePassFixture struct {
+// serves the final closed-schema call.
+type thinkingFixture struct {
 	turns, finals int
 	lastFinal     []llm.Message
-	metadata      string
+	lastSchema    string
 }
 
-func (f *singlePassFixture) Open(context.Context, chat.Scope) (mcpclient.Session, error) {
+func (f *thinkingFixture) Open(context.Context, chat.Scope) (mcpclient.Session, error) {
 	return f, nil
 }
-func (f *singlePassFixture) Tools() []llm.Tool {
+func (f *thinkingFixture) Tools() []llm.Tool {
 	return []llm.Tool{{Type: "function", Function: llm.ToolFunction{Name: "lookup"}}}
 }
-func (f *singlePassFixture) Validate(string, string) error { return nil }
-func (f *singlePassFixture) Call(context.Context, string, string) (string, error) {
+func (f *thinkingFixture) Validate(string, string) error { return nil }
+func (f *thinkingFixture) Call(context.Context, string, string) (string, error) {
 	return "{}", nil
 }
-func (f *singlePassFixture) Close() {}
-func (f *singlePassFixture) Complete(context.Context, []llm.Message) (string, error) {
+func (f *thinkingFixture) Close() {}
+func (f *thinkingFixture) Complete(context.Context, []llm.Message) (string, error) {
 	return "", errors.New("unexpected plain completion")
 }
-func (f *singlePassFixture) CompleteJSON(_ context.Context, in []llm.Message, schema json.RawMessage) (string, error) {
+func (f *thinkingFixture) CompleteJSON(_ context.Context, in []llm.Message, schema json.RawMessage) (string, error) {
 	f.finals++
 	f.lastFinal = in
-	if strings.Contains(string(schema), `"reply"`) {
-		return "", errors.New("full response schema must not be used after a text turn")
-	}
-	return f.metadata, nil
+	f.lastSchema = string(schema)
+	return `{"reply":"Напомню через 5 минут.","schedule":{"prompt":"Напомни пользователю выпить воды сейчас","delay_seconds":300,"interval_seconds":0},"remember":null}`, nil
 }
-func (f *singlePassFixture) CompleteTools(context.Context, []llm.Message, []llm.Tool) (llm.Message, error) {
+func (f *thinkingFixture) CompleteTools(context.Context, []llm.Message, []llm.Tool) (llm.Message, error) {
 	f.turns++
-	return llm.Message{Role: "assistant", Content: "Полный ответ из первого хода."}, nil
+	return llm.Message{Role: "assistant", ReasoningContent: "Thought: no tool needed.", Content: "Thought: the user wants a reminder in five minutes. Internal note: answer briefly and schedule it."}, nil
 }
 
-func TestTextToolTurnIsNotRegenerated(t *testing.T) {
+// A tool-phase text turn is an internal note. Only the closed-schema reply
+// reaches the user; thoughts and notes never do.
+func TestToolPhaseThoughtsNeverReachTheUser(t *testing.T) {
 	e, _, sender, scope := engineFixture(t)
-	f := &singlePassFixture{metadata: `{"schedule":{"prompt":"Напомни пользователю выпить воды сейчас","delay_seconds":300,"interval_seconds":0},"remember":null}`}
+	f := &thinkingFixture{}
 	e.Tools = f
 	e.Model = f
 	accept(t, e, scope, 1, "напомни через 5 минут выпить воды", true)
@@ -162,19 +162,18 @@ func TestTextToolTurnIsNotRegenerated(t *testing.T) {
 		t.Fatal(err)
 	}
 	if f.turns != 1 || f.finals != 1 || sender.calls != 1 {
-		t.Fatalf("expected one tool turn, one metadata call and one message, got %d/%d/%d", f.turns, f.finals, sender.calls)
+		t.Fatalf("expected one tool turn, one structured final call and one message, got %d/%d/%d", f.turns, f.finals, sender.calls)
 	}
-	last := f.lastFinal[len(f.lastFinal)-1]
-	if last.Role != "user" || !strings.Contains(last.Content, "schedule") || f.lastFinal[len(f.lastFinal)-2].Content != "Полный ответ из первого хода." {
-		t.Fatal("metadata call must carry the final reply and the metadata instruction")
+	if !strings.Contains(f.lastSchema, `"reply"`) || !strings.Contains(f.lastFinal[len(f.lastFinal)-1].Content, "Tool phase is finished") {
+		t.Fatal("final call must use the full response schema over the tool transcript")
 	}
 	result, err := e.DB.Agent().Result(context.Background(), job.ID)
-	if err != nil || !strings.Contains(result, "Полный ответ из первого хода.") {
-		t.Fatal("stored result must reuse the tool-phase text", result)
+	if err != nil || strings.Contains(result, "Thought") || strings.Contains(result, "Internal note") || !strings.Contains(result, "Напомню через 5 минут.") {
+		t.Fatal("tool-phase thoughts leaked into the stored reply", result)
 	}
 	d, err := e.DB.Agent().Dashboard(context.Background())
 	if err != nil || len(d.Tasks) != 1 {
-		t.Fatal("schedule from the metadata call was not applied")
+		t.Fatal("schedule from the final call was not applied")
 	}
 }
 
