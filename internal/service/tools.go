@@ -85,7 +85,7 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, request []llm.M
 		if len(message.ToolCalls) == 0 {
 			// Final formatting is a separate closed-schema call; even plain-text tool
 			// model responses cannot bypass schedule validation.
-			if message.Content != "" {
+			if message.Content != "" || message.ReasoningContent != "" {
 				input = append(input, message)
 			}
 			break

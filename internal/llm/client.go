@@ -15,11 +15,12 @@ import (
 )
 
 type Message struct {
-	Images     []string   `json:"-"`
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Images           []string   `json:"-"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
 type ToolFunction struct {
 	Name        string          `json:"name"`
@@ -141,14 +142,41 @@ func (c *Client) chat(ctx context.Context, messages []Message, schema json.RawMe
 	}
 	var result struct {
 		Choices []struct {
-			Message      Message `json:"message"`
-			FinishReason string  `json:"finish_reason"`
+			Message struct {
+				Role             string     `json:"role"`
+				Content          *string    `json:"content"`
+				ReasoningContent *string    `json:"reasoning_content"`
+				Reasoning        *string    `json:"reasoning"`
+				Thought          *string    `json:"thought"`
+				ToolCalls        []ToolCall `json:"tool_calls"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
-	if err := json.Unmarshal(data, &result); err != nil || len(result.Choices) != 1 || (result.Choices[0].Message.Content == "" && len(result.Choices[0].Message.ToolCalls) == 0) || result.Choices[0].FinishReason == "length" {
+	if err := json.Unmarshal(data, &result); err != nil || len(result.Choices) != 1 || result.Choices[0].FinishReason == "length" {
 		return Message{}, errors.New("incomplete model response")
 	}
-	message := result.Choices[0].Message
+	choice := result.Choices[0]
+	var content, reasoning string
+	if choice.Message.Content != nil {
+		content = *choice.Message.Content
+	}
+	if choice.Message.ReasoningContent != nil {
+		reasoning = *choice.Message.ReasoningContent
+	} else if choice.Message.Reasoning != nil {
+		reasoning = *choice.Message.Reasoning
+	} else if choice.Message.Thought != nil {
+		reasoning = *choice.Message.Thought
+	}
+	if content == "" && reasoning == "" && len(choice.Message.ToolCalls) == 0 {
+		return Message{}, errors.New("incomplete model response")
+	}
+	message := Message{
+		Role:             choice.Message.Role,
+		Content:          content,
+		ReasoningContent: reasoning,
+		ToolCalls:        choice.Message.ToolCalls,
+	}
 	if message.Role != "assistant" || len(message.ToolCalls) > 8 || (len(tools) == 0 && len(message.ToolCalls) > 0) {
 		return Message{}, errors.New("invalid model tool response")
 	}

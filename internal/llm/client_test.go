@@ -88,3 +88,21 @@ func TestNativeToolCalling(t *testing.T) {
 		t.Fatal("native tool response not decoded", err)
 	}
 }
+
+func TestNativeToolCallingWithReasoning(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"Thinking step: need to search web","tool_calls":[{"id":"call_search","type":"function","function":{"name":"search","arguments":"{\"query\":\"golang\"}"}}]},"finish_reason":"tool_calls"}]}`))
+	}))
+	defer server.Close()
+	client, _ := New(server.URL, "Default", config.NewSecret(""))
+	response, err := client.CompleteTools(context.Background(), []Message{{Role: "user", Content: "search golang"}}, []Tool{{Type: "function", Function: ToolFunction{Name: "search", Parameters: json.RawMessage(`{"type":"object"}`)}}})
+	if err != nil {
+		t.Fatal("tool call failed:", err)
+	}
+	if response.ReasoningContent != "Thinking step: need to search web" {
+		t.Fatalf("reasoning_content not decoded, got %q", response.ReasoningContent)
+	}
+	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != "search" {
+		t.Fatalf("expected tool call 'search', got %+v", response.ToolCalls)
+	}
+}
