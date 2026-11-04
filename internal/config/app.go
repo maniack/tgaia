@@ -26,6 +26,7 @@ type App struct {
 	LLMEndpoint           string
 	LLMModel              string
 	LLMKey                Secret
+	LLMThinking           bool
 	MockLLM               bool
 	OIDCMode              string
 	OIDCIssuer            string
@@ -66,6 +67,7 @@ type appSchema struct {
 		Model    string `yaml:"model"`
 		APIKey   string `yaml:"api_key"`
 		Mock     string `yaml:"mock"`
+		Thinking string `yaml:"thinking"`
 	} `yaml:"llm"`
 	OIDC struct {
 		Mode         string `yaml:"mode"`
@@ -114,6 +116,10 @@ func (f *File) App() (App, error) {
 	c.MockLLM, err = strconv.ParseBool(get("llm.mock", "TGAIA_LLM_MOCK", "false"))
 	if err != nil {
 		return c, errors.New("invalid llm.mock")
+	}
+	c.LLMThinking, err = strconv.ParseBool(get("llm.thinking", "TGAIA_LLM_THINKING", "true"))
+	if err != nil {
+		return c, errors.New("invalid llm.thinking")
 	}
 	c.MemoryWindow, err = time.ParseDuration(get("memory.window", "TGAIA_MEMORY_WINDOW", "1h"))
 	if err != nil {

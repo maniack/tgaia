@@ -10,7 +10,7 @@ import (
 )
 
 func (c App) Settings() map[string]string {
-	values := map[string]string{"observability.otlp_endpoint": c.OTLPEndpoint, "mcp.servers": EncodeMCP(c.MCPServers), "log_level": strings.ToLower(c.LogLevel.String()), "agent_id": c.AgentID, "listen": c.Listen, "public_url": c.PublicURL, "role": c.Role, "llm.endpoint": c.LLMEndpoint, "llm.model": c.LLMModel, "llm.api_key": c.LLMKey.Reveal(), "llm.mock": strconv.FormatBool(c.MockLLM), "telegram.mode": c.TelegramMode, "memory.embedding_model": c.EmbeddingModel, "memory.window": c.MemoryWindow.String(), "memory.interval": c.MemoryInterval.String()}
+	values := map[string]string{"observability.otlp_endpoint": c.OTLPEndpoint, "mcp.servers": EncodeMCP(c.MCPServers), "log_level": strings.ToLower(c.LogLevel.String()), "agent_id": c.AgentID, "listen": c.Listen, "public_url": c.PublicURL, "role": c.Role, "llm.endpoint": c.LLMEndpoint, "llm.model": c.LLMModel, "llm.api_key": c.LLMKey.Reveal(), "llm.mock": strconv.FormatBool(c.MockLLM), "llm.thinking": strconv.FormatBool(c.LLMThinking), "telegram.mode": c.TelegramMode, "memory.embedding_model": c.EmbeddingModel, "memory.window": c.MemoryWindow.String(), "memory.interval": c.MemoryInterval.String()}
 	for name, spec := range limitSpecs {
 		value := c.Limits[name]
 		if value == "" {
@@ -73,6 +73,8 @@ func (c App) WithSettings(values map[string]string) (App, error) {
 			c.LLMKey = NewSecret(value)
 		case "llm.mock":
 			c.MockLLM, err = strconv.ParseBool(value)
+		case "llm.thinking":
+			c.LLMThinking, err = strconv.ParseBool(value)
 		case "telegram.mode":
 			c.TelegramMode = value
 		case "memory.window":

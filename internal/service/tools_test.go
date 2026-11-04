@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/maniack/tgaia/internal/chat"
@@ -93,8 +94,9 @@ func TestStartedToolNeverRepeated(t *testing.T) {
 }
 
 type reactFixture struct {
-	calls []string
-	turns int
+	calls            []string
+	turns            int
+	seenSystemPrompt string
 }
 
 func (r *reactFixture) Open(context.Context, chat.Scope) (mcpclient.Session, error) { return r, nil }
@@ -121,6 +123,7 @@ func (r *reactFixture) Complete(context.Context, []llm.Message) (string, error) 
 }
 func (r *reactFixture) CompleteTools(_ context.Context, in []llm.Message, _ []llm.Tool) (llm.Message, error) {
 	r.turns++
+	r.seenSystemPrompt = in[0].Content
 	last := in[len(in)-1]
 	if last.Role == "user" {
 		return llm.Message{
@@ -168,7 +171,8 @@ func TestReActThinkingToolLoop(t *testing.T) {
 	accept(t, e, scope, 1, "find info about golang", true)
 	job := take(t, e, "respond")
 	ctx := context.Background()
-	request := []llm.Message{{Role: "system", Content: "system prompt"}, {Role: "user", Content: "find info about golang"}}
+	respondPrompt, _ := prompts.ReadFile("prompts/respond.txt")
+	request := []llm.Message{{Role: "system", Content: string(respondPrompt) + "\nBot administrator instructions:\nBe helpful"}, {Role: "user", Content: "find info about golang"}}
 	output, err := e.toolContext(ctx, *job, request)
 	if err != nil {
 		t.Fatal(err)
@@ -178,6 +182,17 @@ func TestReActThinkingToolLoop(t *testing.T) {
 	}
 	if len(f.calls) != 2 || f.calls[0] != `search:{"query":"golang concurrency"}` || f.calls[1] != `fetch_page:{"url":"https://go.dev/doc"}` {
 		t.Fatalf("expected sequential search and fetch_page calls, got %+v", f.calls)
+	}
+	// Verify tool phase system prompt had tools.txt and did NOT contain respond.txt
+	if strings.Contains(f.seenSystemPrompt, "Output ONLY one JSON object") {
+		t.Fatal("tool phase system prompt should not contain respond.txt JSON envelope requirement")
+	}
+	if !strings.Contains(f.seenSystemPrompt, "ReAct") {
+		t.Fatal("tool phase system prompt should contain ReAct guidance")
+	}
+	// Verify final output restores the original respond.txt system prompt
+	if !strings.Contains(output[0].Content, "Output ONLY one JSON object") {
+		t.Fatal("final toolContext output should restore respond.txt in output[0]")
 	}
 	// Verify final tool context contains all turns and instructions
 	if len(output) < 6 {

@@ -43,12 +43,13 @@ type Client struct {
 	endpoint                 string
 	model                    string
 	key                      config.Secret
+	thinking                 bool
 	http                     *http.Client
 	slots                    chan struct{}
 }
 
 func New(endpoint, model string, key config.Secret) (*Client, error) {
-	return NewWithLimits(endpoint, model, key, config.App{})
+	return NewWithLimits(endpoint, model, key, config.App{LLMThinking: true})
 }
 func NewWithLimits(endpoint, model string, key config.Secret, cfg config.App) (*Client, error) {
 	u, err := url.Parse(endpoint)
@@ -63,7 +64,7 @@ func NewWithLimits(endpoint, model string, key config.Secret, cfg config.App) (*
 		path += "/v1"
 	}
 	u.Path = path + "/chat/completions"
-	return &Client{inputBytes: cfg.Limit("llm_input_bytes"), outputTokens: cfg.Limit("llm_output_tokens"), endpoint: u.String(), model: model, key: key, http: &http.Client{Timeout: cfg.Duration("llm_timeout"), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, slots: make(chan struct{}, cfg.Limit("llm_concurrency"))}, nil
+	return &Client{inputBytes: cfg.Limit("llm_input_bytes"), outputTokens: cfg.Limit("llm_output_tokens"), endpoint: u.String(), model: model, key: key, thinking: cfg.LLMThinking, http: &http.Client{Timeout: cfg.Duration("llm_timeout"), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, slots: make(chan struct{}, cfg.Limit("llm_concurrency"))}, nil
 }
 func (c *Client) Complete(ctx context.Context, messages []Message) (string, error) {
 	return c.complete(ctx, messages, nil)
@@ -114,7 +115,13 @@ func (c *Client) chat(ctx context.Context, messages []Message, schema json.RawMe
 	if len(tools) > 0 {
 		request["tools"] = tools
 		request["tool_choice"] = "auto"
+		if choice, ok := ctx.Value(toolChoiceKey{}).(string); ok && choice != "" {
+			request["tool_choice"] = choice
+		}
 		request["parallel_tool_calls"] = false
+		if c.thinking {
+			request["chat_template_kwargs"] = map[string]any{"enable_thinking": true}
+		}
 	}
 	body, err := json.Marshal(request)
 	if err != nil || len(body) > 16<<20 {
@@ -191,7 +198,12 @@ func (c *Client) chat(ctx context.Context, messages []Message, schema json.RawMe
 }
 
 type outputBudgetKey struct{}
+type toolChoiceKey struct{}
 
 func WithOutputBudget(ctx context.Context, n int) context.Context {
 	return context.WithValue(ctx, outputBudgetKey{}, n)
+}
+
+func WithToolChoice(ctx context.Context, choice string) context.Context {
+	return context.WithValue(ctx, toolChoiceKey{}, choice)
 }

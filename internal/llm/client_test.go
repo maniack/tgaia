@@ -106,3 +106,49 @@ func TestNativeToolCallingWithReasoning(t *testing.T) {
 		t.Fatalf("expected tool call 'search', got %+v", response.ToolCalls)
 	}
 }
+
+func TestNativeToolCallingChatTemplateKwargs(t *testing.T) {
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done","tool_calls":[]},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	// Default client (thinking enabled)
+	client, _ := New(server.URL, "Default", config.NewSecret(""))
+	_, err := client.CompleteTools(context.Background(), []Message{{Role: "user", Content: "test"}}, []Tool{{Type: "function", Function: ToolFunction{Name: "search"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kwargs, ok := capturedBody["chat_template_kwargs"].(map[string]any)
+	if !ok || kwargs["enable_thinking"] != true {
+		t.Fatalf("expected chat_template_kwargs.enable_thinking = true, got %+v", capturedBody["chat_template_kwargs"])
+	}
+	if capturedBody["tool_choice"] != "auto" {
+		t.Fatalf("expected tool_choice 'auto', got %v", capturedBody["tool_choice"])
+	}
+
+	// Thinking disabled via config
+	cfg := config.App{LLMThinking: false}
+	clientNoThinking, _ := NewWithLimits(server.URL, "Default", config.NewSecret(""), cfg)
+	capturedBody = nil
+	_, err = clientNoThinking.CompleteTools(context.Background(), []Message{{Role: "user", Content: "test"}}, []Tool{{Type: "function", Function: ToolFunction{Name: "search"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capturedBody["chat_template_kwargs"] != nil {
+		t.Fatalf("expected no chat_template_kwargs when thinking disabled, got %+v", capturedBody["chat_template_kwargs"])
+	}
+
+	// Custom tool_choice via context
+	ctxRequired := WithToolChoice(context.Background(), "required")
+	capturedBody = nil
+	_, err = client.CompleteTools(ctxRequired, []Message{{Role: "user", Content: "test"}}, []Tool{{Type: "function", Function: ToolFunction{Name: "search"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capturedBody["tool_choice"] != "required" {
+		t.Fatalf("expected tool_choice 'required', got %v", capturedBody["tool_choice"])
+	}
+}

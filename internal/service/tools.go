@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/maniack/tgaia/internal/access"
 	"github.com/maniack/tgaia/internal/chat"
@@ -51,7 +52,12 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, request []llm.M
 	}
 	input := append([]llm.Message(nil), request...)
 	guidance, _ := prompts.ReadFile("prompts/tools.txt")
-	input[0].Content += "\n" + string(guidance)
+	respondPrompt, _ := prompts.ReadFile("prompts/respond.txt")
+	if strings.HasPrefix(input[0].Content, string(respondPrompt)) {
+		input[0].Content = string(guidance) + strings.TrimPrefix(input[0].Content, string(respondPrompt))
+	} else {
+		input[0].Content = string(guidance) + "\n" + input[0].Content
+	}
 	calls := 0
 	uncertain := false
 	for round := 0; round < e.Config.Limit("tool_rounds"); round++ {
