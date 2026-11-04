@@ -31,7 +31,7 @@ func (e Embedder) Embed(_ context.Context, input string) ([]float32, error) {
 }
 
 func (Model) Complete(ctx context.Context, m []llm.Message) (string, error) {
-	if strings.Contains(m[0].Content, "Summarize") {
+	if strings.Contains(m[0].Content, "cumulative long-term memory") {
 		return "Демонстрационная сводка: в этом чате обсуждали планы и договорённости. Это ответ mock-модели, не LM Studio.", nil
 	}
 	reply := "Это демонстрационный ответ mock-модели. Сообщение прошло через изолированный контекст и DB-очередь. Для живого ответа отключите llm.mock и запустите LM Studio."
