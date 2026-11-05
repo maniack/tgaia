@@ -56,13 +56,14 @@ func TestReplyTargetIsVisibleToTheModel(t *testing.T) {
 func TestSelfDescriptionComesFromConfiguration(t *testing.T) {
 	e, model, _, scope := engineFixture(t)
 	e.Config = config.App{LLMModel: "gemma-4-26B", MCPServers: []config.MCPServer{{Name: "webtools", Enabled: true}, {Name: "disabled", Enabled: false}}}
+	e.Identities = map[int64]BotIdentity{1: {Name: "Cyber Walrus", Username: "walrus_bot", Bio: "A concise walrus bio", Description: "A sociable arctic assistant", AvatarPresent: true, AvatarDescription: "A friendly neon-blue cybernetic walrus."}}
 	accept(t, e, scope, 1, "как ты устроен?", true)
 	job := take(t, e, "respond")
 	if err := e.Respond(context.Background(), *job); err != nil {
 		t.Fatal(err)
 	}
 	system := model.input[0].Content
-	for _, want := range []string{"Trusted self-description", `"model":"gemma-4-26B"`, "webtools", "no OAuth", "task_create", `"weekday":`} {
+	for _, want := range []string{"Trusted self-description", `"model":"gemma-4-26B"`, "webtools", "no OAuth", "task_create", `"weekday":`, `"bio":"A concise walrus bio"`, `"description":"A sociable arctic assistant"`, `"avatar_description":"A friendly neon-blue cybernetic walrus."`, "shape your persona"} {
 		if !strings.Contains(system, want) {
 			t.Fatalf("system prompt lacks %q", want)
 		}

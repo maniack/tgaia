@@ -31,6 +31,11 @@ func (e Embedder) Embed(_ context.Context, input string) ([]float32, error) {
 }
 
 func (Model) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	for _, message := range m {
+		if len(message.Images) > 0 {
+			return "A simple local-development bot avatar with a friendly, neutral visual style.", nil
+		}
+	}
 	if strings.Contains(m[0].Content, "cumulative long-term memory") {
 		return "Демонстрационная сводка: в этом чате обсуждали планы и договорённости. Это ответ mock-модели, не LM Studio.", nil
 	}

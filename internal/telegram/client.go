@@ -27,6 +27,12 @@ type User struct {
 	LanguageCode string `json:"language_code"`
 	IsPremium    bool   `json:"is_premium"`
 }
+type BotProfile struct {
+	User
+	Bio         string
+	Description string
+	Avatar      *File
+}
 type ChatMember struct {
 	Status             string `json:"status"`
 	CanDeleteMessages  bool   `json:"can_delete_messages"`
@@ -43,10 +49,13 @@ type SenderChat struct {
 	Title string `json:"title"`
 }
 type File struct {
-	FileID string `json:"file_id"`
-	Size   int64  `json:"file_size"`
-	MIME   string `json:"mime_type"`
-	Name   string `json:"file_name"`
+	FileID   string `json:"file_id"`
+	UniqueID string `json:"file_unique_id"`
+	Size     int64  `json:"file_size"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	MIME     string `json:"mime_type"`
+	Name     string `json:"file_name"`
 }
 type Message struct {
 	ThreadID       int64       `json:"message_thread_id"`
@@ -229,6 +238,43 @@ func (c *Client) Identity(ctx context.Context) (User, error) {
 	var u User
 	err := c.call(ctx, "getMe", map[string]any{}, &u)
 	return u, err
+}
+func (c *Client) Profile(ctx context.Context) (BotProfile, error) {
+	u, err := c.Identity(ctx)
+	if err != nil {
+		return BotProfile{}, err
+	}
+	profile := BotProfile{User: u}
+	var short struct {
+		Description string `json:"short_description"`
+	}
+	if err = c.call(ctx, "getMyShortDescription", map[string]any{}, &short); err != nil {
+		return BotProfile{}, err
+	}
+	profile.Bio = short.Description
+	var full struct {
+		Description string `json:"description"`
+	}
+	if err = c.call(ctx, "getMyDescription", map[string]any{}, &full); err != nil {
+		return BotProfile{}, err
+	}
+	profile.Description = full.Description
+	var photos struct {
+		Photos [][]File `json:"photos"`
+	}
+	if err = c.call(ctx, "getUserProfilePhotos", map[string]any{"user_id": u.ID, "offset": 0, "limit": 1}, &photos); err != nil {
+		return BotProfile{}, err
+	}
+	if len(photos.Photos) > 0 && len(photos.Photos[0]) > 0 {
+		avatar := photos.Photos[0][0]
+		for _, candidate := range photos.Photos[0][1:] {
+			if candidate.Width*candidate.Height > avatar.Width*avatar.Height {
+				avatar = candidate
+			}
+		}
+		profile.Avatar = &avatar
+	}
+	return profile, nil
 }
 func (c *Client) Send(ctx context.Context, chatID int64, text string) (int64, time.Time, error) {
 	return c.SendTopic(ctx, chatID, 0, text)

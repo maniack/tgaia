@@ -337,7 +337,7 @@ func (a *AgentStore) UserProfileMemories(ctx context.Context, agentID string, us
 	if strings.TrimSpace(agentID) == "" || userID <= 0 {
 		return nil, errors.New("invalid user profile")
 	}
-	var rows []agent.ProfileMemory
+	rows := make([]agent.ProfileMemory, 0)
 	err := a.db.WithContext(ctx).Raw(`SELECT e.agent_id,e.bot_id,e.chat_id,e.thread_id,c.title AS chat_title,
  e.source_message_id,e.content,e.created_at
  FROM explicit_memories e

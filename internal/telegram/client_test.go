@@ -104,6 +104,45 @@ func TestIncomingCarriesTelegramProfile(t *testing.T) {
 	}
 }
 
+func TestProfileCollectsTelegramIdentityAndLargestAvatar(t *testing.T) {
+	client := New(config.NewSecret("test-token"))
+	methods := []string{}
+	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		method := request.URL.Path[strings.LastIndex(request.URL.Path, "/")+1:]
+		methods = append(methods, method)
+		result := map[string]any{}
+		switch method {
+		case "getMe":
+			result = map[string]any{"id": 42, "username": "walrus_bot", "first_name": "Cyber", "last_name": "Walrus"}
+		case "getMyShortDescription":
+			result = map[string]any{"short_description": "A concise walrus bio"}
+		case "getMyDescription":
+			result = map[string]any{"description": "A longer description of the walrus assistant"}
+		case "getUserProfilePhotos":
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body["user_id"] != float64(42) || body["limit"] != float64(1) {
+				t.Fatalf("unexpected profile photo request: %#v %v", body, err)
+			}
+			result = map[string]any{"total_count": 1, "photos": [][]map[string]any{{{"file_id": "small", "file_unique_id": "same", "width": 80, "height": 80, "file_size": 100}, {"file_id": "large", "file_unique_id": "same", "width": 640, "height": 640, "file_size": 200}}}}
+		default:
+			t.Fatalf("unexpected Telegram method %s", method)
+		}
+		data, _ := json.Marshal(map[string]any{"ok": true, "result": result})
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(data))), Header: make(http.Header)}, nil
+	})
+	profile, err := client.Profile(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.ID != 42 || profile.FirstName != "Cyber" || profile.LastName != "Walrus" || profile.Username != "walrus_bot" || profile.Bio != "A concise walrus bio" || profile.Description != "A longer description of the walrus assistant" || profile.Avatar == nil || profile.Avatar.FileID != "large" || profile.Avatar.UniqueID != "same" {
+		t.Fatalf("unexpected bot profile: %+v", profile)
+	}
+	want := []string{"getMe", "getMyShortDescription", "getMyDescription", "getUserProfilePhotos"}
+	if strings.Join(methods, ",") != strings.Join(want, ",") {
+		t.Fatalf("methods=%v want=%v", methods, want)
+	}
+}
+
 func TestModerationRequestsUseExactTelegramPayloads(t *testing.T) {
 	type captured struct {
 		method string

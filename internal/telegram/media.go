@@ -64,3 +64,7 @@ func (c *Client) Fetch(ctx context.Context, a agent.Attachment) ([]byte, string,
 	}
 	return data, mime, nil
 }
+
+func (c *Client) FetchProfilePhoto(ctx context.Context, photo File) ([]byte, string, error) {
+	return c.Fetch(ctx, agent.Attachment{Kind: "image", FileID: photo.FileID, Size: photo.Size})
+}

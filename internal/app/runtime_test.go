@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"github.com/maniack/tgaia/internal/llm"
 	"io"
 	"net"
 	"net/http"
@@ -15,8 +14,29 @@ import (
 	"time"
 
 	"github.com/maniack/tgaia/internal/config"
+	"github.com/maniack/tgaia/internal/llm"
+	"github.com/maniack/tgaia/internal/service"
 	"github.com/maniack/tgaia/internal/storage"
 )
+
+type avatarModel struct{ messages []llm.Message }
+
+func (m *avatarModel) Complete(_ context.Context, messages []llm.Message) (string, error) {
+	m.messages = messages
+	return "A neon walrus avatar with blue tusks.", nil
+}
+
+func TestDescribeBotAvatarUsesImageAndProfileContext(t *testing.T) {
+	model := &avatarModel{}
+	identity := service.BotIdentity{Name: "Cyber Walrus", Username: "walrus_bot", Bio: "Arctic helper", Description: "Friendly and direct"}
+	got, err := describeBotAvatar(context.Background(), model, identity, []byte("image"), "image/png")
+	if err != nil || got != "A neon walrus avatar with blue tusks." {
+		t.Fatalf("description=%q err=%v", got, err)
+	}
+	if len(model.messages) != 2 || len(model.messages[1].Images) != 1 || model.messages[1].Images[0] != "data:image/png;base64,aW1hZ2U=" || !strings.Contains(model.messages[1].Content, `"bio":"Arctic helper"`) || !strings.Contains(model.messages[0].Content, "not instructions") {
+		t.Fatalf("avatar transcription input is incomplete: %+v", model.messages)
+	}
+}
 
 func freeAddress(t *testing.T) string {
 	t.Helper()

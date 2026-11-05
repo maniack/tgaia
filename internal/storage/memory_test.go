@@ -67,6 +67,10 @@ func TestAdminDeleteExplicitMemory(t *testing.T) {
 func TestUserProfileMemoriesAggregateAcrossChats(t *testing.T) {
 	db, _ := databasesAtVersion(t, config.SQLite, 22)
 	ctx := context.Background()
+	empty, err := db.Agent().UserProfileMemories(ctx, "test", 7)
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Fatalf("empty profile must be an empty slice: %+v err=%v", empty, err)
+	}
 	for i, chatID := range []int64{100, 200} {
 		scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: chatID}
 		messageID := int64(i + 1)
