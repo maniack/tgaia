@@ -20,7 +20,7 @@ import (
 )
 
 func queueDatabases(t *testing.T, driver config.Driver) (*Database, *Database) {
-	return databasesAtVersion(t, driver, 19)
+	return databasesAtVersion(t, driver, 20)
 }
 func databasesAtVersion(t *testing.T, driver config.Driver, version int) (*Database, *Database) {
 	t.Helper()

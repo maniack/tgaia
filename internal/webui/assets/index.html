@@ -30,14 +30,12 @@
   <a class="brand" href="/"><span class="brand-mark"><svg class="icon"><use href="#i-bubble"/></svg></span><span><span class="brand-name">tgaia</span><span class="brand-sub">Agent workspace</span></span></a>
   <nav class="primary" aria-label="Workspace">
     <button data-tab="conversations" class="selected"><svg class="icon"><use href="#i-bubble"/></svg><span data-short="Chats">Conversations</span></button>
-    <button data-tab="outgoing"><svg class="icon"><use href="#i-paperplane"/></svg><span data-short="Outgoing">Outgoing messages</span></button>
-    <button data-tab="outcomes"><svg class="icon"><use href="#i-wrench"/></svg><span data-short="Outcomes">Tool outcomes</span></button>
     <button data-tab="tasks"><svg class="icon"><use href="#i-clock"/></svg><span data-short="Tasks">Scheduled tasks</span></button>
     <button data-tab="people"><svg class="icon"><use href="#i-people"/></svg><span data-short="People">People &amp; access</span></button>
     <button data-tab="knowledge"><svg class="icon"><use href="#i-book"/></svg><span data-short="Knowledge">Shared knowledge</span></button>
-    <button data-tab="mcp"><svg class="icon"><use href="#i-plug"/></svg><span data-short="MCP">MCP tools</span></button>
-    <button data-tab="settings"><svg class="icon"><use href="#i-sliders"/></svg><span data-short="Settings">Settings</span></button>
-    <button data-tab="audit"><svg class="icon"><use href="#i-doc"/></svg><span data-short="Audit">Audit</span></button>
+    <button data-tab="outgoing" class="desktop-extra"><svg class="icon"><use href="#i-wrench"/></svg><span data-short="Operations">Operations</span></button>
+    <button data-tab="settings" class="desktop-extra"><svg class="icon"><use href="#i-sliders"/></svg><span data-short="Settings">Settings</span></button>
+    <button id="more-nav" class="mobile-more" type="button"><svg class="icon"><use href="#i-sliders"/></svg><span data-short="More">More</span></button>
   </nav>
   <div class="sidebar-foot">
     <div id="mode" class="mode" aria-label="Runtime mode"><span class="pill">Connecting…</span></div>
@@ -64,13 +62,10 @@
       <div id="chat-list" class="chat-list"></div>
     </div>
     <article class="transcript">
-      <div class="scope-head"><div id="scope-heading" class="scope-heading">Select a conversation</div><div id="scope-actions" class="actions"></div></div>
+      <div class="scope-head"><button id="conversation-back" class="back-button quiet" type="button" aria-label="Back to conversations">‹</button><div id="scope-heading" class="scope-heading">Select a conversation</div><div id="scope-actions" class="actions"></div></div>
       <div class="transcript-body">
         <div class="memory"><svg class="icon"><use href="#i-brain"/></svg><div><h3>Memory summary</h3><p id="summary">The summary for the selected bot and chat will appear here.</p></div></div>
         <div id="history" class="history"></div>
-        <details id="prompt-panel" class="prompt" hidden><summary>System prompt for this bot</summary>
-          <form id="prompt-form"><textarea id="bot-prompt" rows="7" aria-label="Bot system prompt"></textarea><div class="actions"><span class="help">Applies to this bot's next job. Other bots keep their own prompts.</span><button>Save prompt</button></div></form>
-        </details>
       </div>
     </article>
   </div>
@@ -78,8 +73,9 @@
 </section>
 
 <section id="outgoing" class="view" hidden>
+  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="audit">Audit log</button></nav>
   <div>
-    <div class="section-head"><h2>Outgoing messages</h2></div>
+    <div class="section-head"><h2>Message delivery</h2></div>
     <p class="section-lead">Every Telegram send with its delivery state. Resolve a sending or uncertain part only after checking the chat.</p>
     <div class="table-scroll"><table><thead><tr><th>Bot / chat</th><th>Message</th><th>Delivery</th></tr></thead><tbody id="deliveries"></tbody></table></div>
   </div>
@@ -92,6 +88,7 @@
 </section>
 
 <section id="outcomes" class="view" hidden>
+  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="audit">Audit log</button></nav>
   <div>
     <div class="section-head"><h2>Tool outcomes</h2></div>
     <p class="section-lead">Resolve unknown outcomes only after checking the external system. Calls are never retried automatically.</p>
@@ -107,6 +104,7 @@
 </section>
 
 <section id="audit" class="view" hidden>
+  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="audit">Audit log</button></nav>
   <div>
     <div class="section-head"><h2>Administrative audit</h2></div>
     <p class="section-lead">Successful changes are committed with their audit record. Credentials are redacted.</p>
@@ -127,11 +125,13 @@
     <div class="section-head"><h2>Administrator knowledge</h2><div class="controls"><label>Agent <span class="select"><select id="knowledge-agent"></select></span></label></div></div>
     <p class="section-lead">This is the explicit shared layer. Bots never publish their chat memory here.</p>
     <div class="card"><div class="card-body"><textarea id="knowledge-text" rows="16" maxlength="16000" aria-label="Shared knowledge" placeholder="Facts, policies and context every bot of this agent should know."></textarea></div></div>
-    <div class="sheet-actions"><button>Save knowledge</button></div>
+    <div class="editor-status"><span id="knowledge-state">Saved</span><span id="knowledge-count">0 / 16,000</span></div>
+    <div class="sheet-actions"><button id="knowledge-save">Save knowledge</button></div>
   </form>
 </section>
 
 <section id="mcp" class="view" hidden>
+  <nav class="subnav" aria-label="Settings"><button data-tab="settings">Runtime</button><button data-tab="mcp">Integrations</button></nav>
   <div>
     <div class="section-head"><h2>MCP servers</h2><div class="controls"><label>Scope <span class="select"><select id="mcp-scope"><option value="shared">Shared</option><option value="worker">Worker replicas</option></select></span></label><button id="mcp-reset" class="quiet" hidden>Reset to configuration file</button><button id="new-mcp"><svg class="icon"><use href="#i-plus"/></svg>Add server</button></div></div>
     <p class="section-lead">Connect remote HTTP/SSE servers or local stdio processes. Changes override the config file and apply automatically to running replicas. Empty allowlists deny access.</p>
@@ -142,6 +142,13 @@
 </section>
 
 <section id="settings" class="view" hidden>
+  <nav class="subnav" aria-label="Settings"><button data-tab="settings">Runtime</button><button data-tab="mcp">Integrations</button></nav>
+  <form id="prompt-form" class="bot-instructions">
+    <div class="section-head"><div><h2>Bot instructions</h2><p class="section-lead">The system prompt used for this bot's next job.</p></div><div class="controls"><label>Bot <span class="select"><select id="bot-prompt-scope"></select></span></label></div></div>
+    <div class="card"><div class="card-body"><textarea id="bot-prompt" rows="8" maxlength="16000" aria-label="Bot system prompt" placeholder="Describe the bot's role, priorities and boundaries."></textarea></div></div>
+    <div class="editor-status"><span id="bot-prompt-state">Saved</span><span id="bot-prompt-count">0 / 16,000</span></div>
+    <div class="sheet-actions"><button id="prompt-save">Save instructions</button></div>
+  </form>
   <div>
     <div class="section-head"><h2>Runtime settings</h2><div class="controls"><label>Scope <span class="select"><select id="settings-scope"><option value="shared">Shared</option><option value="api">API replicas</option><option value="worker">Worker replicas</option></select></span></label></div></div>
     <p class="section-lead">Database values override configuration and apply without restarting. Database connection, OIDC, listener, public URL and process role are managed outside this editor.</p>
@@ -152,7 +159,7 @@
 
 </div>
 
-<footer><span id="queue-status"></span><span>Scoped by agent, bot and chat</span></footer>
+<footer><span id="queue-status"></span><span id="last-updated"></span></footer>
 </main>
 </div>
 
@@ -164,13 +171,14 @@
       <input id="task-id" type="hidden"><input id="task-version" type="hidden">
       <div class="form-group">
         <label class="row"><span>Conversation</span><span class="select"><select id="task-scope" required></select></span></label>
-        <label class="row"><span>Author user ID</span><input id="task-user" type="number" required min="1"></label>
+        <label class="row"><span>Runs as</span><span class="select"><select id="task-user" required></select></span></label>
         <label class="row stack"><span>Prompt</span><textarea id="task-prompt" rows="4" required maxlength="16000" placeholder="What should the bot do when this task runs?"></textarea></label>
       </div>
       <div class="form-label">Schedule</div>
       <div class="form-group">
         <label class="row"><span>Next run <small>Your local time</small></span><input id="task-at" type="datetime-local" required></label>
-        <label class="row"><span>Repeat every <small>Minutes · 0 = once</small></span><input id="task-interval" type="number" min="0" value="0"></label>
+        <label class="row"><span>Repeat</span><span class="select"><select id="task-repeat"><option value="0">Does not repeat</option><option value="1440">Every day</option><option value="10080">Every week</option><option value="custom">Custom interval</option></select></span></label>
+        <label id="task-custom-row" class="row" hidden><span>Custom interval <small>Minutes</small></span><input id="task-interval" type="number" min="60" value="60"></label>
         <label class="row"><span>Enabled</span><input id="task-active" type="checkbox" class="switch" checked></label>
       </div>
       <div class="sheet-actions"><button type="button" class="quiet" data-close="task-sheet">Cancel</button><button>Save task</button></div>
@@ -255,6 +263,14 @@
       <div class="sheet-actions"><button type="button" class="quiet" data-close="demo-sheet">Cancel</button><button>Send through queue</button></div>
     </div>
   </form>
+</dialog>
+
+<dialog id="more-sheet" class="nav-sheet" aria-labelledby="more-title">
+  <div class="sheet-head"><h2 id="more-title">More</h2><button type="button" class="sheet-close" data-close="more-sheet" aria-label="Close">×</button></div>
+  <div class="more-links">
+    <button data-tab="outgoing"><svg class="icon"><use href="#i-wrench"/></svg><span>Operations</span><small>Deliveries, tool calls and audit</small></button>
+    <button data-tab="settings"><svg class="icon"><use href="#i-sliders"/></svg><span>Settings</span><small>Runtime and integrations</small></button>
+  </div>
 </dialog>
 
 <dialog id="alert" class="alert" aria-labelledby="alert-title">

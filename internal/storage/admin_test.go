@@ -15,7 +15,7 @@ import (
 func TestAdminPaginationAndResolution(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, peer := databasesAtVersion(t, driver, 19)
+			db, peer := databasesAtVersion(t, driver, 20)
 			ctx := context.Background()
 			sc := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			for i := int64(1); i <= 125; i++ {
@@ -122,6 +122,48 @@ func TestAdminPaginationAndResolution(t *testing.T) {
 			step, err := db.Agent().ToolStep(ctx, job.ID, "call:0:0")
 			if err != nil || step.State != "uncertain" {
 				t.Fatal("dismissed tool can resume external effects", err)
+			}
+		})
+	}
+}
+
+func TestAdminConversationListUsesForumState(t *testing.T) {
+	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
+		t.Run(string(driver), func(t *testing.T) {
+			db, _ := databasesAtVersion(t, driver, 20)
+			ctx := context.Background()
+			ordinary := chat.Scope{AgentID: "test", BotID: 1, ChatID: 300}
+			if err := db.Agent().Accept(ctx, agent.Incoming{Scope: ordinary, UpdateID: 1000, MessageID: 1, UserID: 7, Title: "ordinary", ChatType: "supergroup", Text: "root", SentAt: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.orm.Exec("INSERT INTO chat_topics(agent_id,bot_id,chat_id,thread_id) VALUES ('test',1,300,99)").Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.orm.Exec("INSERT INTO conversation_messages(agent_id,bot_id,chat_id,thread_id,message_id,user_id,role,text,sent_at) VALUES ('test',1,300,99,2,7,'user','legacy reply thread',?)", time.Now().UnixMilli()).Error; err != nil {
+				t.Fatal(err)
+			}
+			forum := chat.Scope{AgentID: "test", BotID: 1, ChatID: 301, ThreadID: 77}
+			if err := db.Agent().Accept(ctx, agent.Incoming{Scope: forum, UpdateID: 1001, MessageID: 1, UserID: 7, Title: "forum", ChatType: "supergroup", IsForum: true, Text: "topic", SentAt: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			chats, err := db.Agent().AdminPage(ctx, "chats", "", 20, chat.Scope{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			counts := map[string]int{}
+			forumTopic := ""
+			for _, row := range chats.Items {
+				counts[fmt.Sprint(row["chat_id"])]++
+				if fmt.Sprint(row["chat_id"]) == "301" {
+					forumTopic = fmt.Sprint(row["thread_id"])
+				}
+			}
+			if counts["300"] != 1 || counts["301"] != 1 || forumTopic != "77" {
+				t.Fatalf("unexpected conversation rows: %#v", counts)
+			}
+			history, err := db.Agent().AdminPage(ctx, "history", "", 20, ordinary)
+			if err != nil || len(history.Items) != 2 {
+				t.Fatalf("ordinary group history not merged: rows=%d err=%v", len(history.Items), err)
 			}
 		})
 	}

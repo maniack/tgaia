@@ -28,6 +28,7 @@ type Incoming struct {
 	Name           string
 	ChatType       string
 	Title          string
+	IsForum        bool
 	Text           string
 	SentAt         time.Time
 	Respond        bool
@@ -103,6 +104,7 @@ type Conversation struct {
 	ChatID   int64  `json:"chat_id"`
 	Title    string `json:"title"`
 	Kind     string `json:"kind"`
+	IsForum  bool   `json:"is_forum"`
 	Blocked  bool   `json:"blocked"`
 }
 type Summary struct {

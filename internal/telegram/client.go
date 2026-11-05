@@ -40,21 +40,23 @@ type File struct {
 	Name   string `json:"file_name"`
 }
 type Message struct {
-	ThreadID   int64       `json:"message_thread_id"`
-	SenderChat *SenderChat `json:"sender_chat"`
-	EditDate   int64       `json:"edit_date"`
-	Photo      []File      `json:"photo"`
-	Document   *File       `json:"document"`
-	Voice      *File       `json:"voice"`
-	Audio      *File       `json:"audio"`
-	Video      *File       `json:"video"`
-	ID         int64       `json:"message_id"`
-	Date       int64       `json:"date"`
-	From       *User       `json:"from"`
-	Chat       struct {
-		ID    int64  `json:"id"`
-		Type  string `json:"type"`
-		Title string `json:"title"`
+	ThreadID       int64       `json:"message_thread_id"`
+	IsTopicMessage bool        `json:"is_topic_message"`
+	SenderChat     *SenderChat `json:"sender_chat"`
+	EditDate       int64       `json:"edit_date"`
+	Photo          []File      `json:"photo"`
+	Document       *File       `json:"document"`
+	Voice          *File       `json:"voice"`
+	Audio          *File       `json:"audio"`
+	Video          *File       `json:"video"`
+	ID             int64       `json:"message_id"`
+	Date           int64       `json:"date"`
+	From           *User       `json:"from"`
+	Chat           struct {
+		ID      int64  `json:"id"`
+		Type    string `json:"type"`
+		Title   string `json:"title"`
+		IsForum bool   `json:"is_forum"`
 	} `json:"chat"`
 	Text            string   `json:"text"`
 	Caption         string   `json:"caption"`
@@ -93,7 +95,11 @@ func Incoming(update Update, agentID string, botID int64, username string) (agen
 		text = m.Caption
 		entities = m.CaptionEntities
 	}
-	input := agent.Incoming{Scope: chat.Scope{AgentID: agentID, BotID: botID, ChatID: m.Chat.ID, ThreadID: m.ThreadID}, UpdateID: update.ID, MessageID: m.ID, Text: text, ChatType: m.Chat.Type, Title: m.Chat.Title, SentAt: time.Unix(m.Date, 0).UTC()}
+	threadID := int64(0)
+	if m.Chat.IsForum && m.IsTopicMessage {
+		threadID = m.ThreadID
+	}
+	input := agent.Incoming{Scope: chat.Scope{AgentID: agentID, BotID: botID, ChatID: m.Chat.ID, ThreadID: threadID}, UpdateID: update.ID, MessageID: m.ID, Text: text, ChatType: m.Chat.Type, Title: m.Chat.Title, IsForum: m.Chat.IsForum, SentAt: time.Unix(m.Date, 0).UTC()}
 	if m.From != nil && m.SenderChat == nil {
 		input.UserID = m.From.ID
 		input.Username = m.From.Username

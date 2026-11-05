@@ -47,7 +47,7 @@ func (a *AgentStore) AdminPage(ctx context.Context, kind, cursor string, limit i
 		query = "SELECT agent_id,bot_id FROM telegram_bots WHERE bot_id>0"
 		keys = "agent_id,bot_id"
 	case "chats":
-		query = "SELECT c.*,t.thread_id FROM chat_directory c JOIN chat_topics t ON c.agent_id=t.agent_id AND c.bot_id=t.bot_id AND c.chat_id=t.chat_id WHERE c.bot_id>0"
+		query = "SELECT c.*,t.thread_id FROM chat_directory c JOIN chat_topics t ON c.agent_id=t.agent_id AND c.bot_id=t.bot_id AND c.chat_id=t.chat_id WHERE c.bot_id>0 AND (c.is_forum=TRUE OR t.thread_id=0)"
 		keys = "agent_id,bot_id,chat_id,thread_id"
 	case "users":
 		query = "SELECT u.agent_id,u.user_id,u.username,u.name,u.role,u.version,CASE WHEN b.user_id IS NULL THEN FALSE ELSE TRUE END AS blocked FROM seen_users u LEFT JOIN blocked_users b ON u.agent_id=b.agent_id AND u.user_id=b.user_id WHERE 1=1"
@@ -67,7 +67,7 @@ func (a *AgentStore) AdminPage(ctx context.Context, kind, cursor string, limit i
 		if !scope.Valid() {
 			return result, errors.New("history requires a valid scope")
 		}
-		query = "SELECT * FROM conversation_messages WHERE agent_id=? AND bot_id=? AND chat_id=? AND thread_id=?"
+		query = "SELECT m.* FROM conversation_messages m JOIN chat_directory c ON c.agent_id=m.agent_id AND c.bot_id=m.bot_id AND c.chat_id=m.chat_id WHERE m.agent_id=? AND m.bot_id=? AND m.chat_id=? AND (c.is_forum=FALSE OR m.thread_id=?)"
 		args = []any{scope.AgentID, scope.BotID, scope.ChatID, scope.ThreadID}
 		keys = "id"
 		descending = true

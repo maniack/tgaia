@@ -50,7 +50,7 @@ func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=19").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=20").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -83,7 +83,7 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 		if inserted.RowsAffected == 0 {
 			return nil
 		}
-		if err := tx.Exec(`INSERT INTO chat_directory (agent_id,bot_id,chat_id,title,kind) VALUES (?,?,?,?,?) ON CONFLICT (agent_id,bot_id,chat_id) DO UPDATE SET title=excluded.title,kind=excluded.kind`, in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Title, in.ChatType).Error; err != nil {
+		if err := tx.Exec(`INSERT INTO chat_directory (agent_id,bot_id,chat_id,title,kind,is_forum) VALUES (?,?,?,?,?,?) ON CONFLICT (agent_id,bot_id,chat_id) DO UPDATE SET title=excluded.title,kind=excluded.kind,is_forum=excluded.is_forum`, in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Title, in.ChatType, in.IsForum).Error; err != nil {
 			return err
 		}
 		if err := tx.Exec("INSERT INTO chat_topics(agent_id,bot_id,chat_id,thread_id) VALUES (?,?,?,?) ON CONFLICT DO NOTHING", in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Scope.ThreadID).Error; err != nil {

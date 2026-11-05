@@ -71,3 +71,25 @@ func TestResponseTriggers(t *testing.T) {
 		})
 	}
 }
+
+func TestThreadIDRequiresForumTopic(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		want      int64
+	}{
+		{name: "ordinary reply thread", raw: `{"update_id":1,"message":{"message_id":7,"message_thread_id":99,"date":1,"from":{"id":5},"chat":{"id":10,"type":"supergroup"},"text":"hello"}}`},
+		{name: "forum flag without topic message", raw: `{"update_id":2,"message":{"message_id":8,"message_thread_id":99,"date":1,"from":{"id":5},"chat":{"id":10,"type":"supergroup","is_forum":true},"text":"hello"}}`},
+		{name: "forum topic", raw: `{"update_id":3,"message":{"message_id":9,"message_thread_id":99,"is_topic_message":true,"date":1,"from":{"id":5},"chat":{"id":10,"type":"supergroup","is_forum":true},"text":"hello"}}`, want: 99},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var update Update
+			if err := json.Unmarshal([]byte(tc.raw), &update); err != nil {
+				t.Fatal(err)
+			}
+			in, ok := Incoming(update, "agent", 42, "bot")
+			if !ok || in.Scope.ThreadID != tc.want {
+				t.Fatalf("thread=%d want=%d", in.Scope.ThreadID, tc.want)
+			}
+		})
+	}
+}
