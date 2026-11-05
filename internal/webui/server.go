@@ -533,8 +533,12 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid update", 400)
 		return
 	}
-	incoming, ok := telegram.Incoming(update, s.Config.AgentID, id, bot.Username)
-	if ok {
+	if reaction, ok := telegram.ReactionUpdate(update, s.Config.AgentID, id); ok {
+		if err := s.DB.Agent().ApplyReaction(r.Context(), reaction); err != nil {
+			http.Error(w, "Persistence unavailable", 503)
+			return
+		}
+	} else if incoming, ok := telegram.Incoming(update, s.Config.AgentID, id, bot.Username); ok {
 		if err := s.DB.Agent().Accept(r.Context(), incoming); err != nil {
 			http.Error(w, "Persistence unavailable", 503)
 			return

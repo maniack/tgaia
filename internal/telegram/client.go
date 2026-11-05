@@ -48,6 +48,35 @@ type SenderChat struct {
 	ID    int64  `json:"id"`
 	Title string `json:"title"`
 }
+type ReactionChat struct {
+	ID    int64  `json:"id"`
+	Type  string `json:"type"`
+	Title string `json:"title"`
+}
+type ReactionType struct {
+	Type          string `json:"type"`
+	Emoji         string `json:"emoji"`
+	CustomEmojiID string `json:"custom_emoji_id"`
+}
+type ReactionCount struct {
+	Type       ReactionType `json:"type"`
+	TotalCount int          `json:"total_count"`
+}
+type MessageReactionUpdated struct {
+	Chat        ReactionChat   `json:"chat"`
+	MessageID   int64          `json:"message_id"`
+	User        *User          `json:"user"`
+	ActorChat   *ReactionChat  `json:"actor_chat"`
+	Date        int64          `json:"date"`
+	OldReaction []ReactionType `json:"old_reaction"`
+	NewReaction []ReactionType `json:"new_reaction"`
+}
+type MessageReactionCountUpdated struct {
+	Chat      ReactionChat    `json:"chat"`
+	MessageID int64           `json:"message_id"`
+	Date      int64           `json:"date"`
+	Reactions []ReactionCount `json:"reactions"`
+}
 type File struct {
 	FileID   string `json:"file_id"`
 	UniqueID string `json:"file_unique_id"`
@@ -83,11 +112,60 @@ type Message struct {
 	Reply           *Message `json:"reply_to_message"`
 }
 type Update struct {
-	EditedMessage     *Message `json:"edited_message"`
-	EditedChannelPost *Message `json:"edited_channel_post"`
-	ID                int64    `json:"update_id"`
-	Message           *Message `json:"message"`
-	ChannelPost       *Message `json:"channel_post"`
+	EditedMessage        *Message                     `json:"edited_message"`
+	EditedChannelPost    *Message                     `json:"edited_channel_post"`
+	ID                   int64                        `json:"update_id"`
+	Message              *Message                     `json:"message"`
+	ChannelPost          *Message                     `json:"channel_post"`
+	MessageReaction      *MessageReactionUpdated      `json:"message_reaction"`
+	MessageReactionCount *MessageReactionCountUpdated `json:"message_reaction_count"`
+}
+
+func reactionValue(value ReactionType) agent.Reaction {
+	reaction := agent.Reaction{Type: value.Type, Count: 1}
+	switch value.Type {
+	case "emoji":
+		reaction.Value = value.Emoji
+	case "custom_emoji":
+		reaction.Value = value.CustomEmojiID
+	}
+	return reaction
+}
+
+// ReactionUpdate extracts passive reaction state. Unknown reaction types are
+// retained by type for forward compatibility and never treated as commands.
+func ReactionUpdate(update Update, agentID string, botID int64) (agent.ReactionUpdate, bool) {
+	result := agent.ReactionUpdate{AgentID: agentID, BotID: botID, UpdateID: update.ID}
+	if value := update.MessageReaction; value != nil {
+		result.ChatID, result.MessageID = value.Chat.ID, value.MessageID
+		result.UpdatedAt = time.Unix(value.Date, 0).UTC()
+		switch {
+		case value.User != nil:
+			result.ActorType, result.ActorID = "user", value.User.ID
+			result.ActorName = strings.TrimSpace(value.User.FirstName + " " + value.User.LastName)
+			result.ActorUsername = value.User.Username
+		case value.ActorChat != nil:
+			result.ActorType, result.ActorID, result.ActorName = "sender_chat", value.ActorChat.ID, value.ActorChat.Title
+		default:
+			return agent.ReactionUpdate{}, false
+		}
+		for _, reaction := range value.NewReaction {
+			result.Reactions = append(result.Reactions, reactionValue(reaction))
+		}
+		return result, result.ChatID != 0 && result.MessageID > 0 && result.ActorID != 0
+	}
+	if value := update.MessageReactionCount; value != nil {
+		result.ChatID, result.MessageID = value.Chat.ID, value.MessageID
+		result.ActorType, result.ActorName = "anonymous", "Anonymous participants"
+		result.UpdatedAt = time.Unix(value.Date, 0).UTC()
+		for _, count := range value.Reactions {
+			reaction := reactionValue(count.Type)
+			reaction.Count = count.TotalCount
+			result.Reactions = append(result.Reactions, reaction)
+		}
+		return result, result.ChatID != 0 && result.MessageID > 0
+	}
+	return agent.ReactionUpdate{}, false
 }
 
 func Incoming(update Update, agentID string, botID int64, username string) (agent.Incoming, bool) {
@@ -400,7 +478,7 @@ func BotPath(id int64) string { return "/telegram/" + strconv.FormatInt(id, 10) 
 
 func (c *Client) Updates(ctx context.Context, offset int64) ([]Update, error) {
 	var updates []Update
-	err := c.call(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": 25, "limit": 100, "allowed_updates": []string{"message", "channel_post", "edited_message", "edited_channel_post"}}, &updates)
+	err := c.call(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": 25, "limit": 100, "allowed_updates": []string{"message", "channel_post", "edited_message", "edited_channel_post", "message_reaction", "message_reaction_count"}}, &updates)
 	return updates, err
 }
 

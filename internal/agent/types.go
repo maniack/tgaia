@@ -150,6 +150,44 @@ type TelegramProfile struct {
 	IsPremium    bool   `json:"is_premium"`
 }
 
+// ReactionUpdate is the current reaction set reported by Telegram for one
+// actor and one bot-authored message. An empty Reactions slice removes that
+// actor's previous reactions. It is passive feedback and never creates a job.
+type ReactionUpdate struct {
+	AgentID       string
+	BotID         int64
+	ChatID        int64
+	MessageID     int64
+	UpdateID      int64
+	ActorType     string
+	ActorID       int64
+	ActorName     string
+	ActorUsername string
+	Reactions     []Reaction
+	UpdatedAt     time.Time
+}
+
+type Reaction struct {
+	Type  string
+	Value string
+	Count int
+}
+
+// MessageReaction is passive feedback supplied to the model on a later
+// message. MessageText is a bounded preview of the bot message it targeted.
+type MessageReaction struct {
+	MessageID     int64
+	ActorType     string
+	ActorID       int64
+	ActorName     string
+	ActorUsername string
+	Type          string
+	Value         string
+	Count         int
+	UpdatedAt     int64
+	MessageText   string
+}
+
 func (m ExplicitMemory) Author() string {
 	return who(m.CreatedBy, m.CreatedByName, m.CreatedByUsername)
 }
@@ -158,6 +196,7 @@ type Context struct {
 	Summary          Summary
 	Knowledge        string
 	ExplicitMemories []ExplicitMemory
+	Reactions        []MessageReaction
 	Messages         []Message
 }
 type JobPayload struct {

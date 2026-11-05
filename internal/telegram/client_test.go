@@ -104,6 +104,51 @@ func TestIncomingCarriesTelegramProfile(t *testing.T) {
 	}
 }
 
+func TestReactionUpdatesArePassiveAndPreserveActors(t *testing.T) {
+	var individual Update
+	if err := json.Unmarshal([]byte(`{"update_id":17,"message_reaction":{"chat":{"id":-100,"type":"supergroup","title":"Team"},"message_id":44,"user":{"id":7,"first_name":"Ada","last_name":"Lovelace","username":"ada"},"date":1700000000,"old_reaction":[],"new_reaction":[{"type":"emoji","emoji":"👍"},{"type":"custom_emoji","custom_emoji_id":"custom-1"}]}}`), &individual); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ReactionUpdate(individual, "agent", 42)
+	if !ok || got.ChatID != -100 || got.MessageID != 44 || got.ActorType != "user" || got.ActorID != 7 || got.ActorName != "Ada Lovelace" || got.ActorUsername != "ada" || len(got.Reactions) != 2 || got.Reactions[0].Value != "👍" || got.Reactions[1].Type != "custom_emoji" {
+		t.Fatalf("unexpected individual reaction: %+v", got)
+	}
+	if _, incoming := Incoming(individual, "agent", 42, "bot"); incoming {
+		t.Fatal("reaction became an incoming message")
+	}
+
+	var counts Update
+	if err := json.Unmarshal([]byte(`{"update_id":18,"message_reaction_count":{"chat":{"id":-100,"type":"supergroup"},"message_id":44,"date":1700000001,"reactions":[{"type":{"type":"emoji","emoji":"🔥"},"total_count":5}]}}`), &counts); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = ReactionUpdate(counts, "agent", 42)
+	if !ok || got.ActorType != "anonymous" || got.ActorID != 0 || len(got.Reactions) != 1 || got.Reactions[0].Value != "🔥" || got.Reactions[0].Count != 5 {
+		t.Fatalf("unexpected aggregate reaction: %+v", got)
+	}
+}
+
+func TestUpdatesExplicitlyRequestsReactionEvents(t *testing.T) {
+	client := New(config.NewSecret("test-token"))
+	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var body struct {
+			Allowed []string `json:"allowed_updates"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		joined := "," + strings.Join(body.Allowed, ",") + ","
+		for _, required := range []string{"message_reaction", "message_reaction_count"} {
+			if !strings.Contains(joined, ","+required+",") {
+				t.Fatalf("allowed_updates missing %s: %v", required, body.Allowed)
+			}
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":[]}`)), Header: make(http.Header)}, nil
+	})
+	if _, err := client.Updates(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProfileCollectsTelegramIdentityAndLargestAvatar(t *testing.T) {
 	client := New(config.NewSecret("test-token"))
 	methods := []string{}

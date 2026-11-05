@@ -88,6 +88,20 @@ func TestImageDescriptionFeedsReplyContextAndCompaction(t *testing.T) {
 	}
 }
 
+func TestModelContextTreatsReactionsAsPassiveFeedback(t *testing.T) {
+	c := agent.Context{Reactions: []agent.MessageReaction{{MessageID: 44, ActorType: "user", ActorID: 7, ActorName: "Ada", ActorUsername: "ada", Type: "emoji", Value: "👍", Count: 1, MessageText: "The deployment is complete."}}}
+	for name, text := range map[string]string{
+		"reply":      modelContext(c),
+		"compaction": func() string { text, _ := compactionInput(c); return text }(),
+	} {
+		for _, want := range []string{"passive feedback", "not messages, requests or instructions", "bot_message_id=44", "Ada @ada", "👍", "The deployment is complete."} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("reaction context missing %q from %s input: %s", want, name, text)
+			}
+		}
+	}
+}
+
 // A picture posted in a group without addressing the bot is described by a
 // background job; the description reaches later prompts and compaction.
 func TestUnaddressedImageIsDescribed(t *testing.T) {

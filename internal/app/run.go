@@ -46,8 +46,12 @@ func poll(ctx context.Context, db *storage.Database, agentID string, bot config.
 			continue
 		}
 		for _, update := range updates {
-			incoming, ok := telegram.Incoming(update, agentID, bot.ID, bot.Username)
-			if ok {
+			if reaction, ok := telegram.ReactionUpdate(update, agentID, bot.ID); ok {
+				if err := db.Agent().ApplyReaction(ctx, reaction); err != nil {
+					log.Warn("Telegram reaction persistence failed", "bot_id", bot.ID)
+					break
+				}
+			} else if incoming, ok := telegram.Incoming(update, agentID, bot.ID, bot.Username); ok {
 				if err := db.Agent().Accept(ctx, incoming); err != nil {
 					log.Warn("Telegram update persistence failed", "bot_id", bot.ID)
 					break

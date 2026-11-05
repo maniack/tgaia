@@ -50,7 +50,7 @@ func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=22").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=23").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -196,6 +196,10 @@ func (a *AgentStore) Context(ctx context.Context, s chat.Scope, through int64, l
 	result.Knowledge = knowledge.Content
 	if err := memoriesWithUsers(db, s).Order("e.created_at DESC,e.source_message_id DESC").Limit(100).Find(&result.ExplicitMemories).Error; err != nil {
 		return result, errors.New("reading explicit memory failed")
+	}
+	result.Reactions, err = loadReactions(db, s, 200)
+	if err != nil {
+		return result, err
 	}
 	query := historyWithUsers(db, s).Where("m.id>?", result.Summary.ThroughID)
 	if through > 0 {

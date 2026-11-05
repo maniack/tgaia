@@ -3,18 +3,112 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"testing"
+	"time"
+
 	"github.com/maniack/tgaia/internal/agent"
 	"github.com/maniack/tgaia/internal/chat"
 	"github.com/maniack/tgaia/internal/config"
+	"github.com/maniack/tgaia/internal/messages"
 	"github.com/maniack/tgaia/internal/queue"
-	"testing"
-	"time"
 )
+
+func TestMessageReactionsPersistWithoutQueueingResponse(t *testing.T) {
+	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
+		t.Run(string(driver), func(t *testing.T) {
+			db, _ := databasesAtVersion(t, driver, 23)
+			ctx := context.Background()
+			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
+			if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UpdateID: 1, MessageID: 1, UserID: 7, Name: "Ada", Username: "ada", Title: "Team", ChatType: "supergroup", Text: "hello", SentAt: time.Now(), Respond: false}); err != nil {
+				t.Fatal(err)
+			}
+			sentAt := time.Now().UTC()
+			if _, err := db.BotMessages().RecordSent(ctx, messages.Sent{Reference: messages.Reference{Scope: scope, MessageID: 44}, DeliveryKey: "test", SentAt: sentAt}); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.orm.Exec("INSERT INTO conversation_messages (agent_id,bot_id,chat_id,thread_id,message_id,user_id,role,text,sent_at) VALUES (?,?,?,?,?,0,'assistant',?,?)", scope.AgentID, scope.BotID, scope.ChatID, 0, 44, "Thanks for the update", sentAt.UnixMilli()).Error; err != nil {
+				t.Fatal(err)
+			}
+			update := agent.ReactionUpdate{AgentID: scope.AgentID, BotID: scope.BotID, ChatID: scope.ChatID, MessageID: 44, UpdateID: 10, ActorType: "user", ActorID: 8, ActorName: "Lin", ActorUsername: "lin", Reactions: []agent.Reaction{{Type: "emoji", Value: "👍", Count: 1}}, UpdatedAt: sentAt.Add(time.Minute)}
+			if err := db.Agent().ApplyReaction(ctx, update); err != nil {
+				t.Fatal(err)
+			}
+			var jobs int64
+			db.orm.Table("queue_jobs").Count(&jobs)
+			if jobs != 0 {
+				t.Fatal("reaction queued a response")
+			}
+			context, err := db.Agent().Context(ctx, scope, 0, 20)
+			if err != nil || len(context.Reactions) != 1 || context.Reactions[0].Value != "👍" || context.Reactions[0].ActorName != "Lin" || context.Reactions[0].MessageText != "Thanks for the update" {
+				t.Fatalf("reaction missing from context: %+v err=%v", context.Reactions, err)
+			}
+			stale := update
+			stale.UpdateID = 9
+			stale.Reactions = []agent.Reaction{{Type: "emoji", Value: "👎", Count: 1}}
+			if err := db.Agent().ApplyReaction(ctx, stale); err != nil {
+				t.Fatal(err)
+			}
+			context, _ = db.Agent().Context(ctx, scope, 0, 20)
+			if len(context.Reactions) != 1 || context.Reactions[0].Value != "👍" {
+				t.Fatal("stale reaction replaced current state")
+			}
+			update.UpdateID = 11
+			update.UpdatedAt = update.UpdatedAt.Add(time.Minute)
+			update.Reactions = nil
+			if err := db.Agent().ApplyReaction(ctx, update); err != nil {
+				t.Fatal(err)
+			}
+			context, _ = db.Agent().Context(ctx, scope, 0, 20)
+			if len(context.Reactions) != 0 {
+				t.Fatal("removed reaction remained in context")
+			}
+			unknown := update
+			unknown.MessageID = 999
+			unknown.UpdateID = 12
+			unknown.Reactions = []agent.Reaction{{Type: "emoji", Value: "🔥", Count: 1}}
+			if err := db.Agent().ApplyReaction(ctx, unknown); err != nil {
+				t.Fatal(err)
+			}
+			context, _ = db.Agent().Context(ctx, scope, 0, 20)
+			if len(context.Reactions) != 0 {
+				t.Fatal("reaction to an unknown bot message was stored")
+			}
+			anonymous := update
+			anonymous.UpdateID = 13
+			anonymous.ActorType = "anonymous"
+			anonymous.ActorID = 0
+			anonymous.ActorName = "Anonymous participants"
+			anonymous.ActorUsername = ""
+			anonymous.Reactions = []agent.Reaction{{Type: "custom_emoji", Value: "custom-1", Count: 4}, {Type: "paid", Count: 2}}
+			if err := db.Agent().ApplyReaction(ctx, anonymous); err != nil {
+				t.Fatal(err)
+			}
+			context, _ = db.Agent().Context(ctx, scope, 0, 20)
+			if len(context.Reactions) != 2 || context.Reactions[0].ActorType != "anonymous" || context.Reactions[0].Count+context.Reactions[1].Count != 6 {
+				t.Fatalf("anonymous reaction counts missing from context: %+v", context.Reactions)
+			}
+			update.UpdateID = 14
+			update.Reactions = []agent.Reaction{{Type: "emoji", Value: "👍", Count: 1}}
+			if err := db.Agent().ApplyReaction(ctx, update); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Access().SetUserBlocked(ctx, scope.AgentID, update.ActorID, true); err != nil {
+				t.Fatal(err)
+			}
+			context, _ = db.Agent().Context(ctx, scope, 0, 20)
+			for _, reaction := range context.Reactions {
+				if reaction.ActorType == "user" && reaction.ActorID == update.ActorID {
+					t.Fatal("blocked user's reaction remained in context")
+				}
+			}
+		})
+	}
+}
 
 func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 22)
+			db, _ := databasesAtVersion(t, driver, 23)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 10}
 			second := first
