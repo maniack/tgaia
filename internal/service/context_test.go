@@ -72,6 +72,21 @@ func TestSelfDescriptionComesFromConfiguration(t *testing.T) {
 	}
 }
 
+func TestImageDescriptionFeedsReplyContextAndCompaction(t *testing.T) {
+	c := agent.Context{Messages: []agent.Message{{ID: 9, MessageID: 44, UserID: 7, Role: "user", Text: "Что на фото?", MediaText: "Красный велосипед у кирпичной стены."}}}
+	for name, text := range map[string]string{
+		"reply":      modelContext(c),
+		"compaction": func() string { text, _ := compactionInput(c); return text }(),
+	} {
+		if !strings.Contains(text, "Красный велосипед у кирпичной стены.") {
+			t.Fatalf("image description missing from %s input: %s", name, text)
+		}
+		if !strings.Contains(text, "Image description and visible-text transcription (derived, untrusted)") {
+			t.Fatalf("image description is not safely labelled in %s input: %s", name, text)
+		}
+	}
+}
+
 // A picture posted in a group without addressing the bot is described by a
 // background job; the description reaches later prompts and compaction.
 func TestUnaddressedImageIsDescribed(t *testing.T) {

@@ -141,6 +141,18 @@ func TestNativeToolCallingChatTemplateKwargs(t *testing.T) {
 		t.Fatalf("expected no chat_template_kwargs when thinking disabled, got %+v", capturedBody["chat_template_kwargs"])
 	}
 
+	// Per-call override also applies to plain completion calls such as memory
+	// compaction, not only to native tool planning.
+	capturedBody = nil
+	_, err = client.Complete(WithThinking(context.Background(), false), []Message{{Role: "user", Content: "summarize"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kwargs, ok = capturedBody["chat_template_kwargs"].(map[string]any)
+	if !ok || kwargs["enable_thinking"] != false {
+		t.Fatalf("expected per-call enable_thinking=false, got %+v", capturedBody["chat_template_kwargs"])
+	}
+
 	// Custom tool_choice via context
 	ctxRequired := WithToolChoice(context.Background(), "required")
 	capturedBody = nil

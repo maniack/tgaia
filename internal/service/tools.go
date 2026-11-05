@@ -70,6 +70,14 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 		}
 	}
 	builtin := &builtinTools{engine: e, job: job, payload: payload, now: now, scheduled: payload.Prompt != ""}
+	if e.Config.TelegramAdminTools && !builtin.scheduled {
+		if moderator, ok := e.Bots[job.Scope.BotID].(moderationSender); ok {
+			permissions, err := moderator.ModerationPermissions(toolCtx, job.Scope.ChatID, job.Scope.BotID)
+			if err == nil {
+				builtin.moderation = permissions
+			}
+		}
+	}
 	specs := builtin.specs()
 	var session mcpclient.Session
 	if e.Tools != nil {

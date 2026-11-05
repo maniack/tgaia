@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func TestChatMemoryMigrationCollapsesTopicSummaries(t *testing.T) {
 }
 
 func TestAdminDeleteExplicitMemory(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 20)
+	db, _ := databasesAtVersion(t, config.SQLite, 22)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "remember this", SentAt: time.Now()}); err != nil {
@@ -60,5 +61,24 @@ func TestAdminDeleteExplicitMemory(t *testing.T) {
 	}
 	if err := db.Agent().AdminDeleteExplicitMemory(ctx, scope, 1); err == nil {
 		t.Fatal("missing memory deletion succeeded")
+	}
+}
+
+func TestUserProfileMemoriesAggregateAcrossChats(t *testing.T) {
+	db, _ := databasesAtVersion(t, config.SQLite, 22)
+	ctx := context.Background()
+	for i, chatID := range []int64{100, 200} {
+		scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: chatID}
+		messageID := int64(i + 1)
+		if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: messageID, MessageID: messageID, Text: "remember this", Name: "Ada", SentAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.orm.Exec("INSERT INTO explicit_memories(agent_id,bot_id,chat_id,thread_id,source_message_id,source_update_id,created_by,content,created_at) VALUES ('test',1,?,0,?,?,7,?,?)", chatID, messageID, messageID, fmt.Sprintf("fact %d", i), time.Now().UnixMilli()+int64(i)).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := db.Agent().UserProfileMemories(ctx, "test", 7)
+	if err != nil || len(rows) != 2 || rows[0].Content != "fact 1" || rows[1].Content != "fact 0" {
+		t.Fatalf("unexpected profile: %+v err=%v", rows, err)
 	}
 }

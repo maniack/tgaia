@@ -35,6 +35,7 @@ type App struct {
 	SessionKey            Secret
 	AdminGroups           []string
 	TelegramMode          string
+	TelegramAdminTools    bool
 	TelegramWebhookListen string
 	Bots                  []Bot
 	EmbeddingModel        string
@@ -79,6 +80,7 @@ type appSchema struct {
 	} `yaml:"oidc"`
 	Telegram struct {
 		Mode          string `yaml:"mode"`
+		AdminTools    string `yaml:"admin_tools"`
 		WebhookListen string `yaml:"webhook_listen"`
 		Bots          map[string]struct {
 			ID            string `yaml:"id"`
@@ -111,8 +113,12 @@ func (f *File) App() (App, error) {
 	c.OTLPEndpoint = get("observability.otlp_endpoint", "TGAIA_OTLP_ENDPOINT", "")
 	c.ObservabilityListen = get("observability.listen", "TGAIA_OBSERVABILITY_LISTEN", "127.0.0.1:9090")
 	c.TelegramWebhookListen = get("telegram.webhook_listen", "TGAIA_TELEGRAM_WEBHOOK_LISTEN", "")
-	c.EmbeddingModel = get("memory.embedding_model", "TGAIA_MEMORY_EMBEDDING_MODEL", "")
 	var err error
+	c.TelegramAdminTools, err = strconv.ParseBool(get("telegram.admin_tools", "TGAIA_TELEGRAM_ADMIN_TOOLS", "false"))
+	if err != nil {
+		return c, errors.New("invalid telegram.admin_tools")
+	}
+	c.EmbeddingModel = get("memory.embedding_model", "TGAIA_MEMORY_EMBEDDING_MODEL", "")
 	c.MockLLM, err = strconv.ParseBool(get("llm.mock", "TGAIA_LLM_MOCK", "false"))
 	if err != nil {
 		return c, errors.New("invalid llm.mock")

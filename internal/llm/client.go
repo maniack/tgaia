@@ -151,6 +151,9 @@ func (c *Client) chat(ctx context.Context, messages []Message, schema json.RawMe
 	if schema != nil {
 		request["response_format"] = map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "agent_response", "strict": true, "schema": schema}}
 	}
+	if thinking, ok := ctx.Value(thinkingKey{}).(bool); ok {
+		request["chat_template_kwargs"] = map[string]any{"enable_thinking": thinking}
+	}
 	if len(tools) > 0 {
 		request["tools"] = tools
 		request["tool_choice"] = "auto"
@@ -158,7 +161,7 @@ func (c *Client) chat(ctx context.Context, messages []Message, schema json.RawMe
 			request["tool_choice"] = choice
 		}
 		request["parallel_tool_calls"] = false
-		if c.thinking {
+		if _, overridden := ctx.Value(thinkingKey{}).(bool); !overridden && c.thinking {
 			request["chat_template_kwargs"] = map[string]any{"enable_thinking": true}
 		}
 	}
@@ -460,6 +463,7 @@ func (c *Client) validate(result assembled, tools []Tool) (Message, error) {
 
 type outputBudgetKey struct{}
 type toolChoiceKey struct{}
+type thinkingKey struct{}
 
 func WithOutputBudget(ctx context.Context, n int) context.Context {
 	return context.WithValue(ctx, outputBudgetKey{}, n)
@@ -473,6 +477,13 @@ func OutputBudget(ctx context.Context) int {
 
 func WithToolChoice(ctx context.Context, choice string) context.Context {
 	return context.WithValue(ctx, toolChoiceKey{}, choice)
+}
+
+// WithThinking explicitly enables or disables provider-side reasoning for one
+// request. It is used for bounded transformations such as compaction, where a
+// long reasoning trace only consumes the output budget.
+func WithThinking(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, thinkingKey{}, enabled)
 }
 
 // ToolChoice returns the tool_choice override carried by ctx, or "".

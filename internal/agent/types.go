@@ -26,6 +26,8 @@ type Incoming struct {
 	UserID         int64
 	Username       string
 	Name           string
+	LanguageCode   string
+	IsPremium      bool
 	ChatType       string
 	Title          string
 	IsForum        bool
@@ -124,6 +126,28 @@ type ExplicitMemory struct {
 	// Author identity as last seen, for unambiguous attribution in prompts.
 	CreatedByUsername string `json:"created_by_username,omitempty"`
 	CreatedByName     string `json:"created_by_name,omitempty"`
+}
+
+// ProfileMemory is an explicit memory attributed to one person, with enough
+// conversation identity for administrators to inspect or remove its source.
+type ProfileMemory struct {
+	AgentID         string `json:"agent_id"`
+	BotID           int64  `json:"bot_id"`
+	ChatID          int64  `json:"chat_id"`
+	ThreadID        int64  `json:"thread_id"`
+	ChatTitle       string `json:"chat_title"`
+	SourceMessageID int64  `json:"source_message_id"`
+	Content         string `json:"content"`
+	CreatedAt       int64  `json:"created_at"`
+}
+
+type TelegramProfile struct {
+	AgentID      string `json:"agent_id"`
+	UserID       int64  `json:"user_id"`
+	Username     string `json:"username"`
+	Name         string `json:"name"`
+	LanguageCode string `json:"language_code"`
+	IsPremium    bool   `json:"is_premium"`
 }
 
 func (m ExplicitMemory) Author() string {

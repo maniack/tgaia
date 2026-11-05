@@ -30,9 +30,13 @@ func (m *testModel) Complete(ctx context.Context, in []llm.Message) (string, err
 }
 
 type testSender struct {
-	calls int
-	fail  bool
-	last  string
+	calls        int
+	edits        int
+	deletes      int
+	fail         bool
+	last         string
+	lastEditID   int64
+	lastDeleteID int64
 }
 
 type testMemoryEmbedder struct{ calls int }
@@ -54,8 +58,17 @@ func (s *testSender) Send(ctx context.Context, chatID int64, text string) (int64
 	}
 	return int64(10000 + s.calls), time.Now().UTC(), nil
 }
-func (*testSender) Edit(context.Context, int64, int64, string) error { return nil }
-func (*testSender) Delete(context.Context, int64, int64) error       { return nil }
+func (s *testSender) Edit(_ context.Context, _ int64, id int64, text string) error {
+	s.edits++
+	s.lastEditID = id
+	s.last = text
+	return nil
+}
+func (s *testSender) Delete(_ context.Context, _ int64, id int64) error {
+	s.deletes++
+	s.lastDeleteID = id
+	return nil
+}
 func engineFixture(t *testing.T) (*Engine, *testModel, *testSender, chat.Scope) {
 	t.Helper()
 	db, err := storage.Open(context.Background(), config.Config{Database: config.Database{Driver: config.SQLite, DSN: config.NewSecret(filepath.Join(t.TempDir(), "poc.db"))}, ConnectTimeout: time.Second})
@@ -136,7 +149,7 @@ func TestExplicitMemoryIsRetrievedOnlyWithinConversationScope(t *testing.T) {
 	e.Embedder = embedder
 	memory := "User 7 prefers concise answers in Russian."
 	saver := func(fact string) *scriptedModel {
-		return &scriptedModel{reply: `{"reply":"Запомнил."}`, turns: []llm.Message{call("c1", toolMemorySave, `{"content":"`+fact+`"}`), finish("Saved.")}}
+		return &scriptedModel{reply: `{"reply":"Запомнил."}`, turns: []llm.Message{call("c1", toolMemorySave, `{"content":"`+fact+`","mode":"explicit"}`), finish("Saved.")}}
 	}
 	e.Model = saver(memory)
 	accept(t, e, scope, 1, "Запомни: я предпочитаю короткие ответы на русском", true)

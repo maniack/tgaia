@@ -50,7 +50,7 @@ func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=20").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=22").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -90,7 +90,7 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 			return err
 		}
 		if in.UserID > 0 {
-			if err := tx.Exec(`INSERT INTO seen_users (agent_id,user_id,username,name) VALUES (?,?,?,?) ON CONFLICT (agent_id,user_id) DO UPDATE SET username=excluded.username,name=excluded.name`, in.Scope.AgentID, in.UserID, in.Username, in.Name).Error; err != nil {
+			if err := tx.Exec(`INSERT INTO seen_users (agent_id,user_id,username,name,language_code,is_premium) VALUES (?,?,?,?,?,?) ON CONFLICT (agent_id,user_id) DO UPDATE SET username=excluded.username,name=excluded.name,language_code=excluded.language_code,is_premium=excluded.is_premium`, in.Scope.AgentID, in.UserID, in.Username, in.Name, in.LanguageCode, in.IsPremium).Error; err != nil {
 				return err
 			}
 		}
@@ -330,6 +330,38 @@ func (a *AgentStore) AdminDeleteExplicitMemory(ctx context.Context, scope chat.S
 	return nil
 }
 
+// UserProfileMemories projects the same explicit memories used by the agent
+// into a person-centric view. There is intentionally no second profile store
+// that could drift away from conversation memory.
+func (a *AgentStore) UserProfileMemories(ctx context.Context, agentID string, userID int64) ([]agent.ProfileMemory, error) {
+	if strings.TrimSpace(agentID) == "" || userID <= 0 {
+		return nil, errors.New("invalid user profile")
+	}
+	var rows []agent.ProfileMemory
+	err := a.db.WithContext(ctx).Raw(`SELECT e.agent_id,e.bot_id,e.chat_id,e.thread_id,c.title AS chat_title,
+ e.source_message_id,e.content,e.created_at
+ FROM explicit_memories e
+ LEFT JOIN chat_directory c ON c.agent_id=e.agent_id AND c.bot_id=e.bot_id AND c.chat_id=e.chat_id
+ WHERE e.agent_id=? AND e.created_by=?
+ ORDER BY e.created_at DESC,e.source_message_id DESC LIMIT 200`, agentID, userID).Scan(&rows).Error
+	if err != nil {
+		return nil, errors.New("loading user profile failed")
+	}
+	return rows, nil
+}
+
+func (a *AgentStore) TelegramProfile(ctx context.Context, agentID string, userID int64) (agent.TelegramProfile, error) {
+	var profile agent.TelegramProfile
+	if strings.TrimSpace(agentID) == "" || userID <= 0 {
+		return profile, errors.New("invalid user profile")
+	}
+	err := a.db.WithContext(ctx).Table("seen_users").Where("agent_id=? AND user_id=?", agentID, userID).Take(&profile).Error
+	if err != nil {
+		return profile, errors.New("loading Telegram profile failed")
+	}
+	return profile, nil
+}
+
 func encodeEmbedding(model string, vector []float32) (string, error) {
 	if model == "" && len(vector) == 0 {
 		return "[]", nil
@@ -405,6 +437,43 @@ func (a *AgentStore) SearchExplicitMemories(ctx context.Context, scope chat.Scop
 		result[i] = matches[i].memory
 	}
 	return result, nil
+}
+
+// SimilarExplicitMemory returns the current user's closest remembered fact in
+// this conversation. The caller chooses the threshold; a zero score means no
+// comparable embedding was found.
+func (a *AgentStore) SimilarExplicitMemory(ctx context.Context, scope chat.Scope, userID int64, model string, query []float32) (agent.ExplicitMemory, float64, error) {
+	if userID <= 0 {
+		return agent.ExplicitMemory{}, 0, errors.New("invalid explicit memory owner")
+	}
+	encoded, err := encodeEmbedding(model, query)
+	if err != nil {
+		return agent.ExplicitMemory{}, 0, err
+	}
+	var normalized []float32
+	if json.Unmarshal([]byte(encoded), &normalized) != nil {
+		return agent.ExplicitMemory{}, 0, errors.New("invalid explicit memory search")
+	}
+	var rows []agent.ExplicitMemory
+	if err := memoriesWithUsers(a.db.WithContext(ctx), scope).Where("e.created_by=? AND e.embedding_model=?", userID, model).Order("e.created_at DESC").Limit(500).Find(&rows).Error; err != nil {
+		return agent.ExplicitMemory{}, 0, errors.New("searching explicit memory failed")
+	}
+	var best agent.ExplicitMemory
+	bestScore := 0.0
+	for _, row := range rows {
+		var vector []float32
+		if json.Unmarshal([]byte(row.Embedding), &vector) != nil || len(vector) != len(normalized) {
+			continue
+		}
+		score := 0.0
+		for i := range vector {
+			score += float64(vector[i] * normalized[i])
+		}
+		if best.SourceMessageID == 0 || score > bestScore {
+			best, bestScore = row, score
+		}
+	}
+	return best, bestScore, nil
 }
 func (a *AgentStore) SaveSummary(ctx context.Context, job queue.Job, previous, through int64, content string, revision ...int64) error {
 	if len(content) == 0 || len(content) > 16000 || through <= previous {
@@ -636,6 +705,34 @@ func (a *AgentStore) SyncMessage(ctx context.Context, s chat.Scope, id int64, te
 	})
 }
 
+// BotMessagePreviews returns bounded text for known outgoing-message IDs in one
+// conversation. It lets the agent select an edit/delete target by content
+// instead of guessing between several messages sent close together.
+func (a *AgentStore) BotMessagePreviews(ctx context.Context, s chat.Scope, ids []int64) (map[int64]string, error) {
+	previews := make(map[int64]string, len(ids))
+	if !s.Valid() || len(ids) > 50 {
+		return nil, errors.New("invalid bot message preview query")
+	}
+	if len(ids) == 0 {
+		return previews, nil
+	}
+	var rows []struct {
+		MessageID int64
+		Text      string
+	}
+	if err := memoryScoped(a.db.WithContext(ctx).Table("conversation_messages"), s).Select("message_id,text").Where("role='assistant' AND message_id IN ?", ids).Find(&rows).Error; err != nil {
+		return nil, errors.New("reading bot message previews failed")
+	}
+	for _, row := range rows {
+		value := []rune(strings.TrimSpace(row.Text))
+		if len(value) > 160 {
+			value = append(value[:159], '…')
+		}
+		previews[row.MessageID] = string(value)
+	}
+	return previews, nil
+}
+
 func (a *AgentStore) MemoryRevision(ctx context.Context, s chat.Scope) (int64, error) {
 	var row struct{ MemoryRevision int64 }
 	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), s).Take(&row).Error
@@ -668,6 +765,26 @@ func (a *AgentStore) SaveMediaText(ctx context.Context, job queue.Job, id, updat
 	})
 }
 
+// RecordToolMessage adds a bot message sent by an agent tool to conversation
+// history. The BotMessages ledger is recorded separately around the external
+// Telegram call; this write is fenced by the response job lease.
+func (a *AgentStore) RecordToolMessage(ctx context.Context, job queue.Job, messageID int64, text string, at time.Time) error {
+	if messageID <= 0 || strings.TrimSpace(text) == "" || at.IsZero() {
+		return errors.New("invalid tool message")
+	}
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := fence(tx, job); err != nil {
+			return err
+		}
+		result := tx.Exec(`INSERT INTO conversation_messages (agent_id,bot_id,chat_id,thread_id,message_id,user_id,role,text,sent_at)
+ VALUES (?,?,?,?,?,0,'assistant',?,?) ON CONFLICT(agent_id,bot_id,chat_id,message_id) DO NOTHING`, job.Scope.AgentID, job.Scope.BotID, job.Scope.ChatID, job.Scope.ThreadID, messageID, strings.TrimSpace(text), at.UnixMilli())
+		if result.Error != nil || result.RowsAffected != 1 {
+			return errors.New("recording tool message failed")
+		}
+		return nil
+	})
+}
+
 // DeleteExplicitMemory removes one fact of this chat by its source message.
 // Only the author can delete their own fact through tools.
 func (a *AgentStore) DeleteExplicitMemory(ctx context.Context, job queue.Job, sourceMessageID int64) (bool, error) {
@@ -691,4 +808,33 @@ func (a *AgentStore) DeleteExplicitMemory(ctx context.Context, job queue.Job, so
 		return nil
 	})
 	return deleted, err
+}
+
+// UpdateExplicitMemory replaces a fact without changing its stable source ID.
+// Only its author may update it through an agent tool.
+func (a *AgentStore) UpdateExplicitMemory(ctx context.Context, job queue.Job, sourceMessageID int64, content, embeddingModel string, embedding []float32) (bool, error) {
+	if sourceMessageID <= 0 || job.ActorUserID <= 0 || strings.TrimSpace(content) == "" || len(content) > 2000 {
+		return false, errors.New("invalid explicit memory")
+	}
+	encoded, err := encodeEmbedding(embeddingModel, embedding)
+	if err != nil {
+		return false, err
+	}
+	updated := false
+	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := fence(tx, job); err != nil {
+			return err
+		}
+		store := &AgentStore{db: tx}
+		if err := store.CheckActions(ctx, job.Scope, job.ActorUserID); err != nil {
+			return err
+		}
+		result := memoryScoped(tx.Table("explicit_memories"), job.Scope).Where("source_message_id=? AND created_by=?", sourceMessageID, job.ActorUserID).Updates(map[string]any{"content": strings.TrimSpace(content), "embedding_model": embeddingModel, "embedding": encoded, "created_at": time.Now().UTC().UnixMilli()})
+		if result.Error != nil {
+			return errors.New("updating explicit memory failed")
+		}
+		updated = result.RowsAffected > 0
+		return nil
+	})
+	return updated, err
 }

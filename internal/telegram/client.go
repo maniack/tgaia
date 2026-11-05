@@ -20,9 +20,18 @@ import (
 )
 
 type User struct {
-	ID        int64  `json:"id"`
-	Username  string `json:"username"`
-	FirstName string `json:"first_name"`
+	ID           int64  `json:"id"`
+	Username     string `json:"username"`
+	FirstName    string `json:"first_name"`
+	LastName     string `json:"last_name"`
+	LanguageCode string `json:"language_code"`
+	IsPremium    bool   `json:"is_premium"`
+}
+type ChatMember struct {
+	Status             string `json:"status"`
+	CanDeleteMessages  bool   `json:"can_delete_messages"`
+	CanRestrictMembers bool   `json:"can_restrict_members"`
+	CanPinMessages     bool   `json:"can_pin_messages"`
 }
 type Entity struct {
 	Type   string `json:"type"`
@@ -103,7 +112,9 @@ func Incoming(update Update, agentID string, botID int64, username string) (agen
 	if m.From != nil && m.SenderChat == nil {
 		input.UserID = m.From.ID
 		input.Username = m.From.Username
-		input.Name = m.From.FirstName
+		input.Name = strings.TrimSpace(m.From.FirstName + " " + m.From.LastName)
+		input.LanguageCode = m.From.LanguageCode
+		input.IsPremium = m.From.IsPremium
 		if input.Title == "" {
 			input.Title = m.From.FirstName
 		}
@@ -302,6 +313,42 @@ func (c *Client) Edit(ctx context.Context, chatID, messageID int64, text string)
 }
 func (c *Client) Delete(ctx context.Context, chatID, messageID int64) error {
 	return c.call(ctx, "deleteMessage", map[string]any{"chat_id": chatID, "message_id": messageID}, nil)
+}
+
+// ModerationPermissions asks Telegram for the bot's current membership and
+// administrator rights. Configuration alone never grants a moderation tool.
+func (c *Client) ModerationPermissions(ctx context.Context, chatID, botID int64) (map[string]bool, error) {
+	var member ChatMember
+	if err := c.call(ctx, "getChatMember", map[string]any{"chat_id": chatID, "user_id": botID}, &member); err != nil {
+		return nil, err
+	}
+	admin := member.Status == "administrator" || member.Status == "creator"
+	return map[string]bool{
+		"delete":   admin && member.CanDeleteMessages,
+		"restrict": admin && member.CanRestrictMembers,
+		"ban":      admin && member.CanRestrictMembers,
+		"pin":      admin && member.CanPinMessages,
+	}, nil
+}
+func (c *Client) BanMember(ctx context.Context, chatID, userID int64) error {
+	return c.call(ctx, "banChatMember", map[string]any{"chat_id": chatID, "user_id": userID}, nil)
+}
+func (c *Client) UnbanMember(ctx context.Context, chatID, userID int64) error {
+	return c.call(ctx, "unbanChatMember", map[string]any{"chat_id": chatID, "user_id": userID, "only_if_banned": true}, nil)
+}
+func (c *Client) RestrictMember(ctx context.Context, chatID, userID, until int64) error {
+	permissions := map[string]bool{"can_send_messages": false, "can_send_audios": false, "can_send_documents": false, "can_send_photos": false, "can_send_videos": false, "can_send_video_notes": false, "can_send_voice_notes": false, "can_send_polls": false, "can_send_other_messages": false, "can_add_web_page_previews": false, "can_change_info": false, "can_invite_users": false, "can_pin_messages": false, "can_manage_topics": false}
+	return c.call(ctx, "restrictChatMember", map[string]any{"chat_id": chatID, "user_id": userID, "until_date": until, "permissions": permissions, "use_independent_chat_permissions": true}, nil)
+}
+func (c *Client) UnrestrictMember(ctx context.Context, chatID, userID int64) error {
+	permissions := map[string]bool{"can_send_messages": true, "can_send_audios": true, "can_send_documents": true, "can_send_photos": true, "can_send_videos": true, "can_send_video_notes": true, "can_send_voice_notes": true, "can_send_polls": true, "can_send_other_messages": true, "can_add_web_page_previews": true, "can_change_info": true, "can_invite_users": true, "can_pin_messages": true, "can_manage_topics": true}
+	return c.call(ctx, "restrictChatMember", map[string]any{"chat_id": chatID, "user_id": userID, "permissions": permissions, "use_independent_chat_permissions": true}, nil)
+}
+func (c *Client) PinMessage(ctx context.Context, chatID, messageID int64) error {
+	return c.call(ctx, "pinChatMessage", map[string]any{"chat_id": chatID, "message_id": messageID, "disable_notification": true}, nil)
+}
+func (c *Client) UnpinMessage(ctx context.Context, chatID, messageID int64) error {
+	return c.call(ctx, "unpinChatMessage", map[string]any{"chat_id": chatID, "message_id": messageID}, nil)
 }
 func BotPath(id int64) string { return "/telegram/" + strconv.FormatInt(id, 10) }
 

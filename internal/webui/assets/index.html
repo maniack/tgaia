@@ -23,6 +23,8 @@
   <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9 4.5a3 3 0 0 0-3 3v.6A3 3 0 0 0 4.5 11a3 3 0 0 0 1.2 4.1A3 3 0 0 0 9 19.5h3V4.5zm6 0a3 3 0 0 1 3 3v.6a3 3 0 0 1 1.5 2.9 3 3 0 0 1-1.2 4.1A3 3 0 0 1 15 19.5h-3V4.5z"/></symbol>
   <symbol id="i-paperplane" viewBox="0 0 24 24"><path d="M20 4L4 10.5l7 2.5 2.5 7z M20 4l-9 9"/></symbol>
   <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.5 4.5a4.5 4.5 0 0 0 5 6.3L12 18.3a2 2 0 0 1-2.8-2.8l7.5-7.5a4.5 4.5 0 0 0-6.3-5z"/></symbol>
+  <symbol id="i-status" viewBox="0 0 24 24"><path d="M4 17h3l2.2-6 3.2 9L15 7l2 7h3"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M8.5 7L4 12l4.5 5M15.5 7l4.5 5-4.5 5M14 4l-4 16"/></symbol>
 </svg>
 
 <div class="shell">
@@ -33,6 +35,8 @@
     <button data-tab="tasks"><svg class="icon"><use href="#i-clock"/></svg><span data-short="Tasks">Scheduled tasks</span></button>
     <button data-tab="people"><svg class="icon"><use href="#i-people"/></svg><span data-short="People">People &amp; access</span></button>
     <button data-tab="knowledge"><svg class="icon"><use href="#i-brain"/></svg><span data-short="Memory">Memory</span></button>
+    <button data-tab="skills" class="desktop-extra"><svg class="icon"><use href="#i-code"/></svg><span data-short="Skills">Skills &amp; files</span></button>
+    <button data-tab="status" class="desktop-extra"><svg class="icon"><use href="#i-status"/></svg><span data-short="Status">Status</span></button>
     <button data-tab="outgoing" class="desktop-extra"><svg class="icon"><use href="#i-wrench"/></svg><span data-short="Operations">Operations</span></button>
     <button data-tab="settings" class="desktop-extra"><svg class="icon"><use href="#i-sliders"/></svg><span data-short="Settings">Settings</span></button>
     <button id="more-nav" class="mobile-more" type="button"><svg class="icon"><use href="#i-sliders"/></svg><span data-short="More">More</span></button>
@@ -64,12 +68,46 @@
     <article class="transcript">
       <div class="scope-head"><button id="conversation-back" class="back-button quiet" type="button" aria-label="Back to conversations">‹</button><div id="scope-heading" class="scope-heading">Select a conversation</div><div id="scope-actions" class="actions"></div></div>
       <div class="transcript-body">
-        <div class="memory"><svg class="icon"><use href="#i-brain"/></svg><div><h3>Memory summary</h3><p id="summary">The summary for the selected bot and chat will appear here.</p></div></div>
+        <details id="conversation-memory" class="memory" open>
+          <summary><svg class="icon"><use href="#i-brain"/></svg><span>Memory summary</span></summary>
+          <p id="summary">The summary for the selected bot and chat will appear here.</p>
+        </details>
         <div id="history" class="history"></div>
       </div>
     </article>
   </div>
 
+</section>
+
+<section id="skills" class="view" hidden>
+  <nav class="subnav" aria-label="Skills and files"><button id="skills-catalog-tab" class="selected">Skills</button><button id="skills-files-tab">Virtual files</button></nav>
+  <div id="skills-catalog-panel" class="capability-workbench">
+    <aside class="capability-list-pane">
+      <div class="pane-head"><div><h2>Skills</h2><p class="section-lead">Sandboxed programs written by the agent.</p></div><label>Bot <span class="select"><select id="skill-bot"></select></span></label></div>
+      <div id="skill-list" class="capability-catalog"><p class="empty">No skills yet.</p></div>
+    </aside>
+    <article class="capability-inspector">
+      <div id="skill-identity" class="capability-identity"><div><h2>Select a skill</h2><p>Choose a skill to inspect its latest version.</p></div></div>
+      <div id="skill-versions" class="version-strip"></div>
+      <pre id="skill-source" class="source-view">The Starlark source will appear here.</pre>
+      <details class="skill-test"><summary>Last test</summary><pre id="skill-test-output">No test result.</pre></details>
+    </article>
+  </div>
+  <div id="skills-files-panel" class="capability-workbench" hidden>
+    <aside class="capability-list-pane">
+      <div class="pane-head"><div><h2>Virtual files</h2><p class="section-lead">Database storage; never the host filesystem.</p></div></div>
+      <div class="vfs-filters">
+        <label>Conversation <span class="select"><select id="vfs-scope"></select></span></label>
+        <label>Namespace <span class="select"><select id="vfs-namespace"><option value="user">/user</option><option value="chat">/chat</option><option value="bot">/bot</option></select></span></label>
+        <label id="vfs-user-row">Person <span class="select"><select id="vfs-user"></select></span></label>
+      </div>
+      <div id="vfs-list" class="capability-catalog"><p class="empty">No files in this namespace.</p></div>
+    </aside>
+    <article class="capability-inspector">
+      <div id="vfs-identity" class="capability-identity"><div><h2>Select a file</h2><p>Paths and contents are scoped to the selected context.</p></div></div>
+      <pre id="vfs-content" class="source-view">File content will appear here.</pre>
+    </article>
+  </div>
 </section>
 
 <section id="outgoing" class="view" hidden>
@@ -113,10 +151,24 @@
 </section>
 
 <section id="people" class="view" hidden>
-  <div>
+  <nav class="subnav" aria-label="People"><button id="people-access-tab" class="selected">Access</button><button id="people-profiles-tab">Profiles</button></nav>
+  <div id="people-access-panel">
     <div class="section-head"><h2>People observed by the agent</h2></div>
     <p class="section-lead">Reader: replies only. User: replies, own tasks and allowed tools. Roles and user blocks apply across every bot and chat of the agent. Downgrading or blocking pauses tasks and retires queued work; restoring access does not replay it.</p>
     <div class="table-scroll"><table><thead><tr><th>Person</th><th>User ID</th><th>Agent</th><th>Role</th><th>Block</th></tr></thead><tbody id="user-list"></tbody></table></div>
+  </div>
+  <div id="people-profiles-panel" hidden>
+    <div class="profiles-layout">
+      <div class="profiles-roster">
+        <div class="section-head"><div><h2>User profiles</h2><p class="section-lead">Facts and preferences remembered across conversations.</p></div></div>
+        <div id="profile-list" class="profile-list" aria-label="User profiles"></div>
+      </div>
+      <article class="profile-detail">
+        <div id="user-profile-identity" class="profile-identity"><strong>Select a profile</strong><small>Choose a person to inspect remembered facts.</small></div>
+        <p class="section-lead">This is the same memory the agent uses in conversations. Removing a fact here also removes it from Memory.</p>
+        <div id="user-profile-memory" class="profile-memory"><p class="empty">Select a profile.</p></div>
+      </article>
+    </div>
   </div>
 </section>
 
@@ -140,6 +192,25 @@
         <div class="sheet-actions"><button id="knowledge-save">Save knowledge</button></div>
       </form>
     </div>
+  </div>
+</section>
+
+<section id="status" class="view" hidden>
+  <div id="status-health" class="health-strip" aria-live="polite"><span class="status-dot"></span><strong>Loading status…</strong><span></span></div>
+  <div class="status-layout">
+    <article class="status-panel status-activity">
+      <div class="section-head"><div><h2>Activity</h2><p class="section-lead">Live counts from the application database.</p></div></div>
+      <div id="status-metrics" class="status-metrics"></div>
+      <div class="status-queue"><h3>Queue</h3><div id="status-queue"></div></div>
+    </article>
+    <article class="status-panel">
+      <div class="section-head"><div><h2>Capabilities</h2><p class="section-lead">Configured availability and runtime conditions.</p></div></div>
+      <div id="status-capabilities" class="capability-list"></div>
+    </article>
+    <article class="status-panel status-failures">
+      <div class="section-head"><div><h2>Recent failures</h2><p class="section-lead">Retired jobs that need review or replay.</p></div></div>
+      <div id="status-failures" class="failure-list"></div>
+    </article>
   </div>
 </section>
 
@@ -271,6 +342,11 @@
         <label class="row"><span>Bot</span><span class="select"><select id="demo-bot"></select></span></label>
         <label class="row"><span>Chat ID</span><input id="demo-chat" type="number" value="101" required></label>
         <label class="row"><span>User ID</span><input id="demo-user" type="number" value="501" required min="1"></label>
+        <label class="row"><span>Display name</span><input id="demo-name" maxlength="128" placeholder="Local user 501"></label>
+        <label class="row"><span>Username</span><input id="demo-username" maxlength="64" placeholder="username"></label>
+        <label class="row"><span>Language</span><input id="demo-language" maxlength="16" placeholder="ru"></label>
+        <label class="row"><span>Telegram Premium</span><input id="demo-premium" type="checkbox" class="switch"></label>
+        <label class="row"><span>Reply to message ID</span><input id="demo-reply" type="number" min="1" placeholder="Optional"></label>
         <label class="row stack"><span>Message</span><textarea id="demo-text" rows="3" required placeholder="Напомни через минуту проверить результат"></textarea></label>
       </div>
       <div class="sheet-actions"><button type="button" class="quiet" data-close="demo-sheet">Cancel</button><button>Send through queue</button></div>
@@ -281,6 +357,8 @@
 <dialog id="more-sheet" class="nav-sheet" aria-labelledby="more-title">
   <div class="sheet-head"><h2 id="more-title">More</h2><button type="button" class="sheet-close" data-close="more-sheet" aria-label="Close">×</button></div>
   <div class="more-links">
+    <button data-tab="skills"><svg class="icon"><use href="#i-code"/></svg><span>Skills &amp; files</span><small>Sandboxed capabilities and virtual storage</small></button>
+    <button data-tab="status"><svg class="icon"><use href="#i-status"/></svg><span>Status</span><small>Health, activity and capabilities</small></button>
     <button data-tab="outgoing"><svg class="icon"><use href="#i-wrench"/></svg><span>Operations</span><small>Deliveries, tool calls and audit</small></button>
     <button data-tab="settings"><svg class="icon"><use href="#i-sliders"/></svg><span>Settings</span><small>Runtime and integrations</small></button>
   </div>

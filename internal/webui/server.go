@@ -98,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 			_, _ = w.Write(data)
 		})
 		r.Get("/api/state", s.state)
+		r.Get("/api/status", s.status)
 		r.Get("/api/lists/{kind}", s.list)
 		r.Post("/api/resolve-outcome", s.mutation((*Server).resolveOutcome))
 		r.Post("/api/queue-replay", s.mutation((*Server).queueReplay))
@@ -114,6 +115,9 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/mcp/probe", s.probeMCP)
 		r.Post("/api/message-action", s.mutation((*Server).messageAction))
 		r.Get("/api/context", s.context)
+		r.Get("/api/user-profile", s.userProfile)
+		r.Get("/api/skills", s.skills)
+		r.Get("/api/vfs", s.virtualFiles)
 		r.Delete("/api/memory", s.mutation((*Server).deleteMemory))
 		r.Post("/api/chat-block", s.mutation((*Server).chatBlock))
 		r.Post("/api/user-block", s.mutation((*Server).userBlock))
@@ -216,6 +220,38 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	group, csrf := webauth.Session(r)
 	send(w, map[string]any{"data": d, "group": group, "csrf": csrf, "mock_telegram": s.Config.TelegramMode == "mock", "mock_llm": s.Config.MockLLM, "mock_oidc": s.Config.OIDCMode == "mock"})
 }
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	data, err := s.DB.Agent().OperationalStatus(r.Context())
+	if err != nil {
+		http.Error(w, "Status unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	runtime := any(map[string]string{"state": "applied"})
+	if s.RuntimeStatus != nil {
+		runtime = s.RuntimeStatus()
+	}
+	enabledMCP := 0
+	for _, server := range s.Config.MCPServers {
+		if server.Enabled {
+			enabledMCP++
+		}
+	}
+	capabilities := []map[string]any{
+		{"name": "Language model", "state": "ready", "detail": map[bool]string{true: "Deterministic local mock", false: "OpenAI-compatible model " + s.Config.LLMModel}[s.Config.MockLLM]},
+		{"name": "Telegram transport", "state": "ready", "detail": map[string]string{"mock": "Local Telegram simulator", "polling": "Polling", "webhook": "Webhook"}[s.Config.TelegramMode]},
+		{"name": "Agent tools", "state": "ready", "detail": "Tasks, memory and Telegram message CRUD"},
+		{"name": "Scheduler", "state": "ready", "detail": "Durable one-time and recurring tasks"},
+		{"name": "Automatic profiles", "state": "ready", "detail": "Conservative fact extraction with deduplication"},
+		{"name": "Memory compaction", "state": "ready", "detail": fmt.Sprintf("Window %s; scan interval %s", s.Config.MemoryWindow, s.Config.MemoryInterval)},
+		{"name": "Image understanding", "state": "ready", "detail": "Descriptions feed history and compaction"},
+		{"name": "Agent-written skills", "state": "ready", "detail": "Versioned Starlark sandbox with automatic test activation"},
+		{"name": "Virtual filesystem", "state": "ready", "detail": "Database-backed /user, /chat and /bot namespaces"},
+		{"name": "Authentication", "state": "ready", "detail": map[bool]string{true: "Local mock OIDC", false: "OpenID Connect"}[s.Config.OIDCMode == "mock"]},
+		{"name": "Group moderation", "state": map[bool]string{true: "conditional", false: "off"}[s.Config.TelegramAdminTools], "detail": map[bool]string{true: "Each action also requires live Telegram administrator rights", false: "Enable telegram.admin_tools to allow permission checks"}[s.Config.TelegramAdminTools]},
+		{"name": "External integrations", "state": map[bool]string{true: "ready", false: "off"}[enabledMCP > 0], "detail": fmt.Sprintf("%d enabled MCP servers", enabledMCP)},
+	}
+	send(w, map[string]any{"generated_at": time.Now().UTC().Format(time.RFC3339), "database": "ready", "runtime": runtime, "activity": data, "capabilities": capabilities})
+}
 func scope(r *http.Request) chat.Scope {
 	bot, _ := strconv.ParseInt(r.URL.Query().Get("bot_id"), 10, 64)
 	chatID, _ := strconv.ParseInt(r.URL.Query().Get("chat_id"), 10, 64)
@@ -226,6 +262,53 @@ func (s *Server) context(w http.ResponseWriter, r *http.Request) {
 	value, err := s.DB.Agent().Context(r.Context(), scope(r), 0, 50)
 	if err != nil {
 		http.Error(w, "Context unavailable", 400)
+		return
+	}
+	send(w, value)
+}
+func (s *Server) skills(w http.ResponseWriter, r *http.Request) {
+	botID, _ := strconv.ParseInt(r.URL.Query().Get("bot_id"), 10, 64)
+	agentID, name := r.URL.Query().Get("agent_id"), r.URL.Query().Get("name")
+	if name != "" {
+		rows, err := s.DB.Agent().SkillVersions(r.Context(), agentID, botID, name)
+		if err != nil {
+			http.Error(w, "Skills unavailable", 400)
+			return
+		}
+		send(w, map[string]any{"versions": rows})
+		return
+	}
+	rows, err := s.DB.Agent().Skills(r.Context(), agentID, botID)
+	if err != nil {
+		http.Error(w, "Skills unavailable", 400)
+		return
+	}
+	send(w, map[string]any{"skills": rows})
+}
+func (s *Server) virtualFiles(w http.ResponseWriter, r *http.Request) {
+	sc := scope(r)
+	userID, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
+	if path := r.URL.Query().Get("path"); path != "" {
+		file, err := s.DB.Agent().ReadVirtualFile(r.Context(), sc, userID, path)
+		if err != nil {
+			http.Error(w, "Virtual file unavailable", 404)
+			return
+		}
+		send(w, map[string]any{"file": file})
+		return
+	}
+	rows, err := s.DB.Agent().ListVirtualFiles(r.Context(), sc, userID, r.URL.Query().Get("namespace"), r.URL.Query().Get("prefix"))
+	if err != nil {
+		http.Error(w, "Virtual files unavailable", 400)
+		return
+	}
+	send(w, map[string]any{"files": rows})
+}
+func (s *Server) userProfile(w http.ResponseWriter, r *http.Request) {
+	userID, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
+	value, err := s.DB.Agent().UserProfileMemories(r.Context(), r.URL.Query().Get("agent_id"), userID)
+	if err != nil {
+		http.Error(w, "Profile unavailable", http.StatusBadRequest)
 		return
 	}
 	send(w, value)
@@ -461,10 +544,15 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) demoMessage(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		BotID  int64  `json:"bot_id"`
-		ChatID int64  `json:"chat_id"`
-		UserID int64  `json:"user_id"`
-		Text   string `json:"text"`
+		BotID        int64  `json:"bot_id"`
+		ChatID       int64  `json:"chat_id"`
+		UserID       int64  `json:"user_id"`
+		ReplyMessage int64  `json:"reply_to_message_id"`
+		Name         string `json:"name"`
+		Username     string `json:"username"`
+		LanguageCode string `json:"language_code"`
+		IsPremium    bool   `json:"is_premium"`
+		Text         string `json:"text"`
 	}
 	if !read(w, r, &in) {
 		return
@@ -475,12 +563,16 @@ func (s *Server) demoMessage(w http.ResponseWriter, r *http.Request) {
 			found = true
 		}
 	}
-	if !found || in.UserID <= 0 {
+	if !found || in.UserID <= 0 || in.ReplyMessage < 0 || len(in.Name) > 128 || len(in.Username) > 64 || len(in.LanguageCode) > 16 {
 		http.Error(w, "Invalid demo identity", 400)
 		return
 	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		name = fmt.Sprintf("Local user %d", in.UserID)
+	}
 	id := time.Now().UnixMicro()
-	result(w, s.DB.Agent().Accept(r.Context(), agent.Incoming{Scope: chat.Scope{AgentID: s.Config.AgentID, BotID: in.BotID, ChatID: in.ChatID}, UpdateID: id, MessageID: id, UserID: in.UserID, Name: fmt.Sprintf("Local user %d", in.UserID), ChatType: "private", Title: "Local test chat", Text: in.Text, SentAt: time.Now().UTC(), Respond: true}))
+	result(w, s.DB.Agent().Accept(r.Context(), agent.Incoming{Scope: chat.Scope{AgentID: s.Config.AgentID, BotID: in.BotID, ChatID: in.ChatID}, UpdateID: id, MessageID: id, UserID: in.UserID, ReplyMessageID: in.ReplyMessage, Name: name, Username: strings.TrimPrefix(strings.TrimSpace(in.Username), "@"), LanguageCode: strings.TrimSpace(in.LanguageCode), IsPremium: in.IsPremium, ChatType: "private", Title: "Local test chat", Text: in.Text, SentAt: time.Now().UTC(), Respond: true}))
 }
 
 func (s *Server) messageAction(w http.ResponseWriter, r *http.Request) {

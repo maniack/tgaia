@@ -191,6 +191,50 @@ type Dashboard struct {
 	Dead       []map[string]any     `json:"dead"`
 }
 
+type OperationalStatus struct {
+	Bots              int64            `json:"bots"`
+	Chats             int64            `json:"chats"`
+	Users             int64            `json:"users"`
+	Messages          int64            `json:"messages"`
+	RememberedFacts   int64            `json:"remembered_facts"`
+	ActiveTasks       int64            `json:"active_tasks"`
+	UncertainDelivery int64            `json:"uncertain_deliveries"`
+	UncertainTools    int64            `json:"uncertain_tools"`
+	LastActivityAt    int64            `json:"last_activity_at"`
+	Queue             []map[string]any `json:"queue"`
+	RecentFailures    []map[string]any `json:"recent_failures"`
+}
+
+func (a *AgentStore) OperationalStatus(ctx context.Context) (OperationalStatus, error) {
+	result := OperationalStatus{Queue: []map[string]any{}, RecentFailures: []map[string]any{}}
+	counts := []struct {
+		sql  string
+		dest *int64
+	}{
+		{"SELECT COUNT(*) FROM telegram_bots WHERE bot_id>0", &result.Bots},
+		{"SELECT COUNT(*) FROM chat_directory", &result.Chats},
+		{"SELECT COUNT(*) FROM seen_users", &result.Users},
+		{"SELECT COUNT(*) FROM conversation_messages", &result.Messages},
+		{"SELECT COUNT(*) FROM explicit_memories", &result.RememberedFacts},
+		{"SELECT COUNT(*) FROM scheduled_tasks WHERE active=TRUE", &result.ActiveTasks},
+		{"SELECT COUNT(*) FROM outbound_deliveries WHERE state IN ('sending','uncertain')", &result.UncertainDelivery},
+		{"SELECT COUNT(*) FROM tool_steps WHERE state IN ('started','uncertain') AND step LIKE 'call:%'", &result.UncertainTools},
+		{"SELECT COALESCE(MAX(sent_at),0) FROM conversation_messages", &result.LastActivityAt},
+	}
+	for _, count := range counts {
+		if err := a.db.WithContext(ctx).Raw(count.sql).Scan(count.dest).Error; err != nil {
+			return result, errors.New("loading operational status failed")
+		}
+	}
+	if err := a.db.WithContext(ctx).Raw("SELECT status,COUNT(*) AS count FROM queue_jobs GROUP BY status ORDER BY status").Scan(&result.Queue).Error; err != nil {
+		return result, errors.New("loading operational status failed")
+	}
+	if err := a.db.WithContext(ctx).Raw("SELECT id,kind,agent_id,bot_id,chat_id,attempts,max_attempts,updated_at FROM queue_jobs WHERE status='dead' ORDER BY updated_at DESC,id DESC LIMIT 10").Scan(&result.RecentFailures).Error; err != nil {
+		return result, errors.New("loading operational status failed")
+	}
+	return result, nil
+}
+
 func (a *AgentStore) Dashboard(ctx context.Context) (Dashboard, error) {
 	var result Dashboard
 	queries := []struct {
@@ -199,7 +243,7 @@ func (a *AgentStore) Dashboard(ctx context.Context) (Dashboard, error) {
 	}{
 		{"SELECT agent_id,bot_id FROM telegram_bots WHERE bot_id>0 ORDER BY agent_id,bot_id LIMIT 200", &result.Bots},
 		{"SELECT * FROM chat_directory ORDER BY agent_id,bot_id,chat_id LIMIT 200", &result.Chats},
-		{"SELECT u.agent_id,u.user_id,u.username,u.name,u.role,u.version,CASE WHEN b.user_id IS NULL THEN FALSE ELSE TRUE END AS blocked FROM seen_users u LEFT JOIN blocked_users b ON u.agent_id=b.agent_id AND u.user_id=b.user_id ORDER BY u.agent_id,u.user_id LIMIT 200", &result.Users},
+		{"SELECT u.agent_id,u.user_id,u.username,u.name,u.language_code,u.is_premium,u.role,u.version,CASE WHEN b.user_id IS NULL THEN FALSE ELSE TRUE END AS blocked FROM seen_users u LEFT JOIN blocked_users b ON u.agent_id=b.agent_id AND u.user_id=b.user_id ORDER BY u.agent_id,u.user_id LIMIT 200", &result.Users},
 		{"SELECT * FROM scheduled_tasks ORDER BY run_at,id LIMIT 200", &result.Tasks},
 		{"SELECT d.job_id,d.part,d.state,d.message_id,d.text,j.agent_id,j.bot_id,j.chat_id FROM outbound_deliveries d JOIN queue_jobs j ON j.id=d.job_id ORDER BY d.job_id DESC,d.part LIMIT 100", &result.Deliveries},
 		{"SELECT status,COUNT(*) AS count FROM queue_jobs GROUP BY status", &result.Queue},

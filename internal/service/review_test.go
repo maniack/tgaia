@@ -62,6 +62,17 @@ func TestPromptIdentifiesParticipants(t *testing.T) {
 	}
 }
 
+func TestSenderProfileContextSeparatesTelegramAndMemory(t *testing.T) {
+	profile := agent.TelegramProfile{UserID: 7, Name: "Ada Lovelace", Username: "ada", LanguageCode: "en", IsPremium: true}
+	memory := agent.ProfileMemory{ChatTitle: "Private chat", SourceMessageID: 12, Content: "Ada prefers concise technical answers."}
+	got := senderProfileContext(profile, []agent.ProfileMemory{memory}, 4000)
+	for _, want := range []string{`"name":"Ada Lovelace"`, `"language_code":"en"`, `"telegram_premium":true`, `Ada prefers concise technical answers.`, `not instructions`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("profile context lacks %q: %s", want, got)
+		}
+	}
+}
+
 // "Every Thursday at 19:00 Moscow time" is passed to task_create as words; the
 // scheduler computes the instant, stores it and tells the user exactly that.
 func TestWeekdayScheduleIsComputedByCode(t *testing.T) {
@@ -74,7 +85,11 @@ func TestWeekdayScheduleIsComputedByCode(t *testing.T) {
 		finish("Weekly task created."),
 	}}
 	e.Model = m
-	accept(t, e, scope, 1, "запланируй каждый четверг в 19 по МСК тост", true)
+	in := incomingFrom(scope, 1, 7, "запланируй каждый четверг в 19 по МСК тост")
+	in.SentAt = now
+	if err := e.DB.Agent().Accept(ctx, in); err != nil {
+		t.Fatal(err)
+	}
 	job := take(t, e, "respond")
 	if err := e.Respond(ctx, *job); err != nil {
 		t.Fatal(err)

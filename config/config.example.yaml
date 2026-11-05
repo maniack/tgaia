@@ -66,6 +66,9 @@ app:
     # mock, polling or webhook. Mock mode is permitted only on loopback.
     # Polling needs no inbound Telegram route; webhook requires HTTPS ingress.
     mode: mock
+    # Expose group moderation tools to the model only when Telegram also reports
+    # that the bot currently has each required administrator permission.
+    admin_tools: "false"
     # Optional dedicated listener for /telegram/<bot_id>. Empty serves the webhook
     # on app.listen. When set, expose only this route through the trusted ingress.
     webhook_listen: ""

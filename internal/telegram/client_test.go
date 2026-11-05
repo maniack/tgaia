@@ -93,3 +93,62 @@ func TestThreadIDRequiresForumTopic(t *testing.T) {
 		})
 	}
 }
+
+func TestIncomingCarriesTelegramProfile(t *testing.T) {
+	m := &Message{ID: 1, Date: 1, Text: "hello", From: &User{ID: 7, Username: "ada", FirstName: "Ada", LastName: "Lovelace", LanguageCode: "en", IsPremium: true}}
+	m.Chat.ID = 10
+	m.Chat.Type = "private"
+	in, ok := Incoming(Update{ID: 1, Message: m}, "agent", 42, "bot")
+	if !ok || in.Name != "Ada Lovelace" || in.Username != "ada" || in.LanguageCode != "en" || !in.IsPremium {
+		t.Fatalf("unexpected Telegram profile: %+v", in)
+	}
+}
+
+func TestModerationRequestsUseExactTelegramPayloads(t *testing.T) {
+	type captured struct {
+		method string
+		body   map[string]any
+	}
+	var requests []captured
+	client := New(config.NewSecret("test-token"))
+	client.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		method := request.URL.Path[strings.LastIndex(request.URL.Path, "/")+1:]
+		requests = append(requests, captured{method: method, body: body})
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":true}`)), Header: make(http.Header)}, nil
+	})
+	ctx := context.Background()
+	for _, action := range []func() error{
+		func() error { return client.BanMember(ctx, -100, 7) },
+		func() error { return client.UnbanMember(ctx, -100, 7) },
+		func() error { return client.RestrictMember(ctx, -100, 7, 12345) },
+		func() error { return client.UnrestrictMember(ctx, -100, 7) },
+		func() error { return client.PinMessage(ctx, -100, 99) },
+		func() error { return client.UnpinMessage(ctx, -100, 99) },
+	} {
+		if err := action(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wantMethods := []string{"banChatMember", "unbanChatMember", "restrictChatMember", "restrictChatMember", "pinChatMessage", "unpinChatMessage"}
+	if len(requests) != len(wantMethods) {
+		t.Fatalf("requests=%d", len(requests))
+	}
+	for i, want := range wantMethods {
+		if requests[i].method != want || requests[i].body["chat_id"] != float64(-100) {
+			t.Fatalf("request %d: %+v", i, requests[i])
+		}
+	}
+	if requests[1].body["only_if_banned"] != true || requests[2].body["until_date"] != float64(12345) || requests[4].body["disable_notification"] != true {
+		t.Fatalf("moderation options missing: %+v", requests)
+	}
+	for _, i := range []int{2, 3} {
+		permissions, ok := requests[i].body["permissions"].(map[string]any)
+		if !ok || permissions["can_send_messages"] != (i == 3) || requests[i].body["use_independent_chat_permissions"] != true {
+			t.Fatalf("restriction payload %d: %+v", i, requests[i].body)
+		}
+	}
+}

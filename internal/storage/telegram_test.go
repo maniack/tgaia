@@ -14,7 +14,7 @@ import (
 func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 20)
+			db, _ := databasesAtVersion(t, driver, 22)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 10}
 			second := first
