@@ -438,6 +438,16 @@ dialog.alert .buttons button.destructive-text { background: var(--fill-3); color
 .status-queue { margin-top: 18px; }
 .status-queue h3 { margin-bottom: 8px; color: var(--label-2); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 .status-queue > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.status-profiles { grid-column: 1 / -1; }
+.bot-profile-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 12px; }
+.bot-profile-card { min-width: 0; padding: 14px; border: .5px solid var(--separator); border-radius: 11px; background: var(--bg); }
+.bot-profile-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.bot-profile-head strong, .bot-profile-head small { display: block; overflow-wrap: anywhere; }
+.bot-profile-head small, .bot-profile-refresh { margin-top: 3px; color: var(--label-2); }
+.bot-profile-fields { display: grid; grid-template-columns: minmax(82px, auto) minmax(0, 1fr); gap: 7px 12px; margin: 14px 0; }
+.bot-profile-fields dt { color: var(--label-2); font-size: 12px; }
+.bot-profile-fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.bot-profile-refresh { display: block; font-size: 11px; }
 .capability-row, .failure-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; padding: 11px 0; border-top: .5px solid var(--separator); }
 .capability-row:first-child, .failure-row:first-child { border-top: 0; padding-top: 0; }
 .capability-row strong, .failure-row strong { font-size: 14px; }

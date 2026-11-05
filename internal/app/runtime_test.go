@@ -38,6 +38,26 @@ func TestDescribeBotAvatarUsesImageAndProfileContext(t *testing.T) {
 	}
 }
 
+func TestPublishedStatusExposesActiveBotProfile(t *testing.T) {
+	refreshed := time.Date(2026, 11, 5, 10, 30, 0, 0, time.UTC)
+	r := &runtime{}
+	r.setPublishedStatus(&snapshot{
+		config: config.App{Bots: []config.Bot{{ID: 42}}},
+		engine: &service.Engine{Identities: map[int64]service.BotIdentity{42: {
+			Name: "Cyber Walrus", Username: "walrus_bot", Bio: "Arctic helper", Description: "Friendly and direct",
+			AvatarPresent: true, AvatarDescription: "A neon walrus.", ProfileRefreshedAt: refreshed,
+		}}},
+	})
+	status := r.Status().(applyStatus)
+	if status.State != "applied" || len(status.BotProfiles) != 1 {
+		t.Fatalf("unexpected runtime status: %+v", status)
+	}
+	profile := status.BotProfiles[0]
+	if profile.BotID != 42 || profile.Bio != "Arctic helper" || profile.AvatarDescription != "A neon walrus." || profile.RefreshedAt != refreshed || !profile.ContextIncluded {
+		t.Fatalf("unexpected profile status: %+v", profile)
+	}
+}
+
 func freeAddress(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")

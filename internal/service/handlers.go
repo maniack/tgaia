@@ -39,6 +39,7 @@ type BotIdentity struct {
 	Name, Username, Bio, Description, AvatarDescription string
 	AvatarPresent                                       bool
 	AvatarUniqueID                                      string
+	ProfileRefreshedAt                                  time.Time
 }
 type Engine struct {
 	Config            config.App

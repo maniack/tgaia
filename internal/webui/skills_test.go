@@ -102,12 +102,15 @@ func TestVirtualFilesAPIEnforcesNamespaceScope(t *testing.T) {
 func TestStatusIncludesConfiguredCoreCapabilities(t *testing.T) {
 	server, _ := skillsServer(t)
 	server.Config = config.App{LLMModel: "local-model", TelegramMode: "mock", OIDCMode: "mock", MemoryWindow: time.Hour, MemoryInterval: time.Minute}
+	server.RuntimeStatus = func() any {
+		return map[string]any{"state": "applied", "bot_profiles": []map[string]any{{"bot_id": 42, "bio": "Arctic helper", "context_included": true}}}
+	}
 	w := httptest.NewRecorder()
 	server.status(w, httptest.NewRequest("GET", "/api/status", nil))
 	if w.Code != 200 {
 		t.Fatalf("status response %d: %s", w.Code, w.Body.String())
 	}
-	for _, want := range []string{"Language model", "local-model", "Telegram transport", "Scheduler", "Memory compaction", "Authentication", "Agent-written skills", "Virtual filesystem"} {
+	for _, want := range []string{"Language model", "local-model", "Telegram transport", "Scheduler", "Memory compaction", "Authentication", "Agent-written skills", "Virtual filesystem", "Arctic helper", "context_included"} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("status response missing %q: %s", want, w.Body.String())
 		}
