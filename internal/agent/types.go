@@ -108,8 +108,10 @@ type Conversation struct {
 	Blocked  bool   `json:"blocked"`
 }
 type Summary struct {
-	Content   string `json:"content"`
-	ThroughID int64  `json:"through_id"`
+	Content      string `json:"content"`
+	ThroughID    int64  `json:"through_id"`
+	ThroughAt    int64  `json:"through_at" gorm:"-"`
+	PendingCount int64  `json:"pending_count" gorm:"-"`
 }
 type ExplicitMemory struct {
 	SourceMessageID int64  `json:"source_message_id"`

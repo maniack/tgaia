@@ -32,7 +32,7 @@
     <button data-tab="conversations" class="selected"><svg class="icon"><use href="#i-bubble"/></svg><span data-short="Chats">Conversations</span></button>
     <button data-tab="tasks"><svg class="icon"><use href="#i-clock"/></svg><span data-short="Tasks">Scheduled tasks</span></button>
     <button data-tab="people"><svg class="icon"><use href="#i-people"/></svg><span data-short="People">People &amp; access</span></button>
-    <button data-tab="knowledge"><svg class="icon"><use href="#i-book"/></svg><span data-short="Knowledge">Shared knowledge</span></button>
+    <button data-tab="knowledge"><svg class="icon"><use href="#i-brain"/></svg><span data-short="Memory">Memory</span></button>
     <button data-tab="outgoing" class="desktop-extra"><svg class="icon"><use href="#i-wrench"/></svg><span data-short="Operations">Operations</span></button>
     <button data-tab="settings" class="desktop-extra"><svg class="icon"><use href="#i-sliders"/></svg><span data-short="Settings">Settings</span></button>
     <button id="more-nav" class="mobile-more" type="button"><svg class="icon"><use href="#i-sliders"/></svg><span data-short="More">More</span></button>
@@ -121,13 +121,26 @@
 </section>
 
 <section id="knowledge" class="view" hidden>
-  <form id="knowledge-form">
-    <div class="section-head"><h2>Administrator knowledge</h2><div class="controls"><label>Agent <span class="select"><select id="knowledge-agent"></select></span></label></div></div>
-    <p class="section-lead">This is the explicit shared layer. Bots never publish their chat memory here.</p>
-    <div class="card"><div class="card-body"><textarea id="knowledge-text" rows="16" maxlength="16000" aria-label="Shared knowledge" placeholder="Facts, policies and context every bot of this agent should know."></textarea></div></div>
-    <div class="editor-status"><span id="knowledge-state">Saved</span><span id="knowledge-count">0 / 16,000</span></div>
-    <div class="sheet-actions"><button id="knowledge-save">Save knowledge</button></div>
-  </form>
+  <div class="memory-overview">
+    <div class="section-head"><div><h2>What the agent remembers</h2><p class="section-lead">These layers are added to the model context in this order.</p></div><div class="controls"><label>Conversation <span class="select"><select id="memory-scope"></select></span></label></div></div>
+    <div class="memory-layers">
+      <article class="memory-layer summary-layer">
+        <div class="memory-layer-head"><span class="memory-layer-icon"><svg class="icon"><use href="#i-brain"/></svg></span><div><h3>Conversation summary</h3><p>Generated from older messages and shared across topics.</p></div></div>
+        <div class="memory-metrics"><span id="memory-checkpoint">No checkpoint yet</span><span id="memory-pending">0 recent messages</span></div>
+        <p id="memory-summary" class="memory-copy">No summary yet. Older messages are summarized automatically.</p>
+      </article>
+      <article class="memory-layer facts-layer">
+        <div class="memory-layer-head"><span class="memory-layer-icon"><svg class="icon"><use href="#i-book"/></svg></span><div><h3>Remembered facts</h3><p>Saved only when a person explicitly asks the bot to remember.</p></div></div>
+        <div id="memory-facts" class="memory-facts"><p class="empty">No saved facts in this conversation.</p></div>
+      </article>
+      <form id="knowledge-form" class="memory-layer knowledge-layer">
+        <div class="memory-layer-head"><span class="memory-layer-icon"><svg class="icon"><use href="#i-doc"/></svg></span><div><h3>Shared knowledge</h3><p>Administrator-maintained reference for every bot of this agent.</p></div><label>Agent <span class="select"><select id="knowledge-agent"></select></span></label></div>
+        <textarea id="knowledge-text" rows="10" maxlength="16000" aria-label="Shared knowledge" placeholder="Facts, policies and context every bot of this agent should know."></textarea>
+        <div class="editor-status"><span id="knowledge-state">Saved</span><span id="knowledge-count">0 / 16,000</span></div>
+        <div class="sheet-actions"><button id="knowledge-save">Save knowledge</button></div>
+      </form>
+    </div>
+  </div>
 </section>
 
 <section id="mcp" class="view" hidden>

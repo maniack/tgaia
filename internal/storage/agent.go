@@ -180,6 +180,14 @@ func (a *AgentStore) Context(ctx context.Context, s chat.Scope, through int64, l
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return result, errors.New("reading summary failed")
 	}
+	if result.Summary.ThroughID > 0 {
+		if err := memoryScoped(db.Table("conversation_messages"), s).Select("sent_at").Where("id=?", result.Summary.ThroughID).Scan(&result.Summary.ThroughAt).Error; err != nil {
+			return result, errors.New("reading summary checkpoint failed")
+		}
+	}
+	if err := memoryScoped(db.Table("conversation_messages"), s).Where("id>?", result.Summary.ThroughID).Count(&result.Summary.PendingCount).Error; err != nil {
+		return result, errors.New("counting recent messages failed")
+	}
 	var knowledge struct{ Content string }
 	err = db.Table("shared_knowledge").Where("agent_id=?", s.AgentID).Take(&knowledge).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -309,6 +317,17 @@ func (a *AgentStore) ApplyExplicitMemory(ctx context.Context, job queue.Job, sou
 		}
 		return nil
 	})
+}
+
+func (a *AgentStore) AdminDeleteExplicitMemory(ctx context.Context, scope chat.Scope, sourceMessageID int64) error {
+	if !scope.Valid() || sourceMessageID <= 0 {
+		return errors.New("invalid explicit memory")
+	}
+	result := memoryScoped(a.db.WithContext(ctx).Table("explicit_memories"), scope).Where("source_message_id=?", sourceMessageID).Delete(&struct{}{})
+	if result.Error != nil || result.RowsAffected != 1 {
+		return errors.New("explicit memory not found")
+	}
+	return nil
 }
 
 func encodeEmbedding(model string, vector []float32) (string, error) {

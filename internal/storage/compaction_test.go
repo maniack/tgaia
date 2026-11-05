@@ -60,6 +60,10 @@ func TestCompactionBatchingAndScopeDedup(t *testing.T) {
 	if err := db.Agent().SaveSummary(ctx, *job, 0, 3, "memory through 3", 0); err != nil {
 		t.Fatal(err)
 	}
+	memory, err := db.Agent().Context(ctx, scope, 0, 50)
+	if err != nil || memory.Summary.ThroughAt == 0 || memory.Summary.PendingCount != 3 {
+		t.Fatalf("summary status is incomplete: %+v, %v", memory.Summary, err)
+	}
 	if err := db.Queue().Complete(ctx, job.Receipt); err != nil {
 		t.Fatal(err)
 	}

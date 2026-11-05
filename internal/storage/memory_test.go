@@ -3,7 +3,10 @@ package storage
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/maniack/tgaia/internal/agent"
+	"github.com/maniack/tgaia/internal/chat"
 	"github.com/maniack/tgaia/internal/config"
 )
 
@@ -39,5 +42,23 @@ func TestChatMemoryMigrationCollapsesTopicSummaries(t *testing.T) {
 	}
 	if err := db.Agent().Ready(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAdminDeleteExplicitMemory(t *testing.T) {
+	db, _ := databasesAtVersion(t, config.SQLite, 20)
+	ctx := context.Background()
+	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
+	if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "remember this", SentAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.orm.Exec("INSERT INTO explicit_memories(agent_id,bot_id,chat_id,thread_id,source_message_id,source_update_id,created_by,content,created_at) VALUES ('test',1,100,0,1,1,7,'a fact',?)", time.Now().UnixMilli()).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Agent().AdminDeleteExplicitMemory(ctx, scope, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Agent().AdminDeleteExplicitMemory(ctx, scope, 1); err == nil {
+		t.Fatal("missing memory deletion succeeded")
 	}
 }

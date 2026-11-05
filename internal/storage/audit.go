@@ -60,6 +60,9 @@ func (d *Database) AuditState(ctx context.Context, path string, body map[string]
 	case "/api/knowledge":
 		query = "SELECT * FROM shared_knowledge WHERE agent_id=?"
 		args = []any{body["agent_id"]}
+	case "/api/memory":
+		query = "SELECT agent_id,bot_id,chat_id,source_message_id,created_by,content,created_at FROM explicit_memories WHERE agent_id=? AND bot_id=? AND chat_id=? AND source_message_id=?"
+		args = []any{body["agent_id"], body["bot_id"], body["chat_id"], body["source_message_id"]}
 	case "/api/resolve-outcome":
 		query = "SELECT id,job_id,target,action,subject,reason,created_at FROM outcome_resolutions WHERE job_id=? AND target=?"
 		args = []any{body["job_id"], body["target"]}

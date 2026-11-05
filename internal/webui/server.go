@@ -114,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/mcp/probe", s.probeMCP)
 		r.Post("/api/message-action", s.mutation((*Server).messageAction))
 		r.Get("/api/context", s.context)
+		r.Delete("/api/memory", s.mutation((*Server).deleteMemory))
 		r.Post("/api/chat-block", s.mutation((*Server).chatBlock))
 		r.Post("/api/user-block", s.mutation((*Server).userBlock))
 		r.Post("/api/user-role", s.mutation((*Server).userRole))
@@ -228,6 +229,19 @@ func (s *Server) context(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	send(w, value)
+}
+func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID         string `json:"agent_id"`
+		BotID           int64  `json:"bot_id"`
+		ChatID          int64  `json:"chat_id"`
+		ThreadID        int64  `json:"thread_id"`
+		SourceMessageID int64  `json:"source_message_id"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Agent().AdminDeleteExplicitMemory(r.Context(), chat.Scope{AgentID: in.AgentID, BotID: in.BotID, ChatID: in.ChatID, ThreadID: in.ThreadID}, in.SourceMessageID))
 }
 func (s *Server) chatBlock(w http.ResponseWriter, r *http.Request) {
 	var in struct {
