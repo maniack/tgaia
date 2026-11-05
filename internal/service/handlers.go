@@ -96,7 +96,7 @@ func decodeResponse(text string) (Response, error) {
 const replyLimit = 64000
 
 func (e *Engine) Handlers() map[string]queue.Handler {
-	return map[string]queue.Handler{"respond": e.Respond, "compact": e.Compact, "message_action": e.MessageAction, "media": e.Describe}
+	return map[string]queue.Handler{"respond": e.Respond, "compact": e.Compact, "message_action": e.MessageAction, "media": e.Describe, "failure_notice": e.FailureNotice}
 }
 func modelContext(c agent.Context, budgets ...int) string {
 	budget := 100000
@@ -462,6 +462,20 @@ func (e *Engine) deliver(ctx context.Context, job queue.Job, payload agent.JobPa
 				}
 				return true, nil
 			}
+		} else if payload.Action == "failure_notice" && payload.MessageID > 0 {
+			if replier, ok := sender.(interface {
+				SendReply(context.Context, int64, int64, int64, string) (int64, time.Time, error)
+			}); ok {
+				id, at, err = replier.SendReply(ctx, job.Scope.ChatID, job.Scope.ThreadID, payload.MessageID, item.text)
+			} else if topic, ok := sender.(interface {
+				SendTopic(context.Context, int64, int64, string) (int64, time.Time, error)
+			}); ok {
+				id, at, err = topic.SendTopic(ctx, job.Scope.ChatID, job.Scope.ThreadID, item.text)
+			} else if job.Scope.ThreadID != 0 {
+				return false, errors.New("sender does not support forum topics")
+			} else {
+				id, at, err = sender.Send(ctx, job.Scope.ChatID, item.text)
+			}
 		} else if topic, ok := sender.(interface {
 			SendTopic(context.Context, int64, int64, string) (int64, time.Time, error)
 		}); ok {
@@ -509,17 +523,42 @@ func (e *Engine) deliver(ctx context.Context, job queue.Job, payload agent.JobPa
 
 // failureNotices are short, content-free user messages for retired jobs.
 var failureNotices = map[string]string{
-	"llm_timeout":   "⚠️ Не успел подготовить ответ: генерация заняла слишком много времени. Попробуйте сформулировать запрос короче или разбить его на части.",
-	"llm_truncated": "⚠️ Ответ получился слишком длинным и был обрезан. Попробуйте разбить запрос на части.",
-	"llm_budget":    "⚠️ Запрос вместе с контекстом слишком велик для модели. Попробуйте сформулировать короче.",
-	"quota":         "⚠️ Исчерпан лимит обращений к модели для этого чата. Попробуйте позже.",
+	"llm_timeout":       "⚠️ Не успел подготовить ответ: генерация заняла слишком много времени. Попробуйте сформулировать запрос короче или разбить его на части.",
+	"llm_429":           "⚠️ Модель сейчас перегружена или достигла лимита запросов. Попробуйте немного позже.",
+	"llm_http_5xx":      "⚠️ Сервис модели временно недоступен. Попробуйте немного позже.",
+	"llm_http_4xx":      "⚠️ Сервис модели отклонил запрос. Администратору нужно проверить модель и её настройки.",
+	"llm_network":       "⚠️ Не удалось связаться с сервисом модели. Попробуйте немного позже.",
+	"llm_truncated":     "⚠️ Ответ получился слишком длинным и был обрезан. Попробуйте разбить запрос на части.",
+	"llm_invalid":       "⚠️ Модель вернула ответ в неподдерживаемом формате. Попробуйте переформулировать запрос.",
+	"llm_budget":        "⚠️ Запрос вместе с контекстом слишком велик для модели. Попробуйте сформулировать короче.",
+	"embedding_timeout": "⚠️ Не удалось вовремя обработать память разговора. Попробуйте немного позже.",
+	"embedding_failed":  "⚠️ Сервис памяти временно недоступен. Попробуйте немного позже.",
+	"mcp_timeout":       "⚠️ Внешний инструмент не ответил вовремя. Перед повтором проверьте, не выполнил ли он действие.",
+	"mcp_failed":        "⚠️ Внешний инструмент завершился с ошибкой. Попробуйте позже или обратитесь к администратору.",
+	"quota":             "⚠️ Исчерпан лимит обращений к модели для этого чата. Попробуйте позже.",
+	"budget":            "⚠️ Запрос превысил допустимый объём или число операций. Попробуйте упростить его.",
+	"job_timeout":       "⚠️ Обработка запроса заняла слишком много времени и была остановлена. Попробуйте ещё раз.",
+	"panic":             "⚠️ Во время обработки произошла внутренняя ошибка. Администратор увидит её в статусе приложения.",
+	"handler_error":     "⚠️ Во время обработки произошла внутренняя ошибка. Попробуйте ещё раз; если ошибка повторится, сообщите администратору.",
+	"other":             "⚠️ Во время обработки произошла внутренняя ошибка. Попробуйте ещё раз; если ошибка повторится, сообщите администратору.",
 }
 
 const failureNotice = "⚠️ Не смог ответить на это сообщение из-за ошибки. Попробуйте ещё раз или сформулируйте запрос короче."
 
-// Failed runs once after a respond job is retired as dead. It tells the user
-// that no answer is coming instead of leaving the request silently unanswered.
-// The notice is best effort and is not part of the durable delivery protocol.
+func failureNoticeText(class string, scheduled bool) string {
+	text := failureNotices[class]
+	if text == "" {
+		text = failureNotice
+	}
+	if scheduled {
+		return "⚠️ Запланированная задача не выполнена. " + strings.TrimPrefix(text, "⚠️ ")
+	}
+	return text
+}
+
+// Failed runs once after a respond job is retired as dead. It creates a
+// separate durable delivery job so retries never re-run the failed model or
+// tool work and an uncertain Telegram send is never blindly duplicated.
 func (e *Engine) Failed(ctx context.Context, job queue.Job, class string) {
 	if job.Kind != "respond" {
 		return
@@ -528,41 +567,26 @@ func (e *Engine) Failed(ctx context.Context, job queue.Job, class string) {
 	if json.Unmarshal(job.Payload, &payload) != nil || job.SenderChatID != 0 {
 		return
 	}
+	payload.Action = "failure_notice"
+	payload.FailureClass = class
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, _ = e.DB.Queue().Enqueue(ctx, queue.Input{Scope: job.Scope, ActorUserID: job.ActorUserID, Key: fmt.Sprintf("failure:%d", job.ID), Kind: "failure_notice", Payload: encoded, MaxAttempts: 3})
+}
+
+func (e *Engine) FailureNotice(ctx context.Context, job queue.Job) error {
+	var payload agent.JobPayload
+	if json.Unmarshal(job.Payload, &payload) != nil || payload.Action != "failure_notice" {
+		return queue.Fail("handler_error", true, errors.New("invalid failure notice"))
+	}
 	sender := e.Bots[job.Scope.BotID]
 	if sender == nil {
-		return
+		return queue.Fail("handler_error", true, errors.New("bot sender unavailable"))
 	}
-	store := e.DB.Agent()
-	if err := store.Check(ctx, job.Scope, job.ActorUserID); err != nil {
-		return
-	}
-	if payload.MessageID > 0 {
-		if current, err := store.ResponseCurrent(ctx, job.Scope, payload.MessageID, payload.SourceUpdateID); err != nil || !current {
-			return
-		}
-	}
-	text := failureNotices[class]
-	if text == "" {
-		text = failureNotice
-	}
-	if payload.Prompt != "" {
-		text = "⚠️ Запланированная задача не выполнена из-за ошибки. Она повторится по расписанию, если это периодическая задача."
-	}
-	if replier, ok := sender.(interface {
-		SendReply(context.Context, int64, int64, int64, string) (int64, time.Time, error)
-	}); ok {
-		_, _, _ = replier.SendReply(ctx, job.Scope.ChatID, job.Scope.ThreadID, payload.MessageID, text)
-		return
-	}
-	if topic, ok := sender.(interface {
-		SendTopic(context.Context, int64, int64, string) (int64, time.Time, error)
-	}); ok {
-		_, _, _ = topic.SendTopic(ctx, job.Scope.ChatID, job.Scope.ThreadID, text)
-		return
-	}
-	if job.Scope.ThreadID == 0 {
-		_, _, _ = sender.Send(ctx, job.Scope.ChatID, text)
-	}
+	_, err := e.deliver(ctx, job, payload, sender, nil, false, []piece{{text: failureNoticeText(payload.FailureClass, payload.Prompt != "")}})
+	return err
 }
 func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
 	if err := e.DB.Agent().Check(ctx, job.Scope, 0); err != nil {

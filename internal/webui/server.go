@@ -50,7 +50,7 @@ func (s *Server) Handler() http.Handler {
 		})
 	})
 	if s.Config.Role == "worker" {
-		return r
+		return withRequestID(r)
 	}
 	r.Get("/login", s.Auth.Login)
 	r.Get("/auth/callback", s.Auth.Callback)
@@ -137,7 +137,14 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/api/demo-message", s.mutation((*Server).demoMessage))
 		}
 	})
-	return r
+	return withRequestID(r)
+}
+
+func withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-ID", uuid.NewString())
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) ObservabilityHandler() http.Handler {
@@ -238,9 +245,16 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 			enabledMCP++
 		}
 	}
+	workerState, workerDetail := "ready", "Queue worker is running"
+	if s.Config.Role == "api" {
+		workerState, workerDetail = "conditional", "Handled by separate worker replicas"
+	} else if s.Monitor != nil && !s.Monitor.WorkerRunning.Load() {
+		workerState, workerDetail = "off", "Queue worker is not running"
+	}
 	capabilities := []map[string]any{
 		{"name": "Language model", "state": "ready", "detail": map[bool]string{true: "Deterministic local mock", false: "OpenAI-compatible model " + s.Config.LLMModel}[s.Config.MockLLM]},
 		{"name": "Telegram transport", "state": "ready", "detail": map[string]string{"mock": "Local Telegram simulator", "polling": "Polling", "webhook": "Webhook"}[s.Config.TelegramMode]},
+		{"name": "Queue worker", "state": workerState, "detail": workerDetail},
 		{"name": "Agent tools", "state": "ready", "detail": "Tasks, memory and Telegram message CRUD"},
 		{"name": "Scheduler", "state": "ready", "detail": "Durable one-time and recurring tasks"},
 		{"name": "Automatic profiles", "state": "ready", "detail": "Conservative fact extraction with deduplication"},

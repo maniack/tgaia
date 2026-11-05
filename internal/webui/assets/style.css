@@ -199,6 +199,20 @@ main { min-width: 0; display: flex; flex-direction: column; }
 #notice.error { color: var(--red); }
 #notice.error::before { background: var(--red); }
 
+/* Persistent failures stay in the document flow; transient action feedback uses the toast. */
+.system-alert {
+  margin: 14px 28px 0; padding: 13px 15px; border: 1px solid color-mix(in srgb, var(--red) 35%, transparent);
+  border-radius: var(--radius); background: color-mix(in srgb, var(--red) 9%, var(--bg-elevated));
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px;
+}
+.system-alert[hidden] { display: none; }
+.system-alert-mark { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--red); color: #fff; font-weight: 700; }
+.system-alert strong { display: block; font-size: 13px; }
+.system-alert p { margin: 3px 0 0; color: var(--label-2); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.system-alert small { display: block; margin-top: 4px; color: var(--label-3); font-size: 11px; }
+.system-alert-actions { display: flex; align-items: center; gap: 6px; }
+.system-alert-actions .plain { color: var(--label-2); }
+
 /* ---------- Buttons ---------- */
 button, .button {
   -webkit-appearance: none; appearance: none;
@@ -213,6 +227,9 @@ button, .button {
 button:hover { background: color-mix(in srgb, var(--accent) 88%, #000 12%); }
 button:active { transform: scale(.985); }
 button:disabled { opacity: .4; pointer-events: none; }
+button[aria-busy="true"] { position: relative; color: transparent !important; }
+button[aria-busy="true"]::after { content: ""; position: absolute; width: 12px; height: 12px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; color: var(--label); animation: busy-spin .7s linear infinite; }
+@keyframes busy-spin { to { transform: rotate(360deg); } }
 button.quiet { background: var(--fill-3); color: var(--label); }
 button.quiet:hover { background: var(--fill-2); }
 button.plain { background: transparent; color: var(--accent); padding: 0 6px; }
@@ -528,6 +545,8 @@ footer { display: flex; justify-content: space-between; gap: 16px; color: var(--
   .toolbar p { display: none; }
   #runtime-status { display: none; }
   .content { padding: 16px 16px calc(118px + env(safe-area-inset-bottom)); gap: 22px; }
+  .system-alert { margin: 10px 12px 0; grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+  .system-alert-actions { grid-column: 2; justify-content: flex-start; }
   .split { grid-template-columns: 1fr; min-height: 0; }
   .chats-pane { border-right: 0; border-bottom: .5px solid var(--separator); }
   .chat-list { max-height: 300px; }

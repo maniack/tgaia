@@ -229,7 +229,7 @@ func (a *AgentStore) OperationalStatus(ctx context.Context) (OperationalStatus, 
 	if err := a.db.WithContext(ctx).Raw("SELECT status,COUNT(*) AS count FROM queue_jobs GROUP BY status ORDER BY status").Scan(&result.Queue).Error; err != nil {
 		return result, errors.New("loading operational status failed")
 	}
-	if err := a.db.WithContext(ctx).Raw("SELECT id,kind,agent_id,bot_id,chat_id,attempts,max_attempts,updated_at FROM queue_jobs WHERE status='dead' ORDER BY updated_at DESC,id DESC LIMIT 10").Scan(&result.RecentFailures).Error; err != nil {
+	if err := a.db.WithContext(ctx).Raw("SELECT id,kind,agent_id,bot_id,chat_id,attempts,max_attempts,failure_class,updated_at FROM queue_jobs WHERE status='dead' ORDER BY updated_at DESC,id DESC LIMIT 10").Scan(&result.RecentFailures).Error; err != nil {
 		return result, errors.New("loading operational status failed")
 	}
 	return result, nil
@@ -247,7 +247,7 @@ func (a *AgentStore) Dashboard(ctx context.Context) (Dashboard, error) {
 		{"SELECT * FROM scheduled_tasks ORDER BY run_at,id LIMIT 200", &result.Tasks},
 		{"SELECT d.job_id,d.part,d.state,d.message_id,d.text,j.agent_id,j.bot_id,j.chat_id FROM outbound_deliveries d JOIN queue_jobs j ON j.id=d.job_id ORDER BY d.job_id DESC,d.part LIMIT 100", &result.Deliveries},
 		{"SELECT status,COUNT(*) AS count FROM queue_jobs GROUP BY status", &result.Queue},
-		{"SELECT id,agent_id,bot_id,chat_id,thread_id,kind,attempts,max_attempts,updated_at FROM queue_jobs WHERE status='dead' ORDER BY id DESC LIMIT 50", &result.Dead},
+		{"SELECT id,agent_id,bot_id,chat_id,thread_id,kind,attempts,max_attempts,failure_class,updated_at FROM queue_jobs WHERE status='dead' ORDER BY id DESC LIMIT 50", &result.Dead},
 	}
 	for _, q := range queries {
 		if err := a.db.WithContext(ctx).Raw(q.sql).Scan(q.dest).Error; err != nil {

@@ -14,7 +14,7 @@ var migrations embed.FS
 
 // Migrate is explicit: normal startup never changes the schema. In Kubernetes
 // run this as a migration Job before rolling out consumers.
-func (d *Database) Migrate(ctx context.Context) error { return d.migrate(ctx, 24) }
+func (d *Database) Migrate(ctx context.Context) error { return d.migrate(ctx, 25) }
 
 func (d *Database) migrate(ctx context.Context, target int) error {
 	err := d.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -26,7 +26,7 @@ func (d *Database) migrate(ctx context.Context, target int) error {
 		if err := tx.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)").Error; err != nil {
 			return err
 		}
-		for index, path := range []string{"migrations/001_queue.sql", "migrations/002_bot_messages.sql", "migrations/003_bots_and_access.sql", "migrations/004_poc.sql", "migrations/005_settings.sql", "migrations/006_polling.sql", "migrations/007_runtime_identity.sql", "migrations/008_memory_revision.sql", "migrations/009_mcp.sql", "migrations/010_admin.sql", "migrations/011_telegram.sql", "migrations/012_reply_links.sql", "migrations/013_roles.sql", "migrations/014_audit.sql", "migrations/015_quotas.sql", "migrations/016_setting_scopes.sql", "migrations/017_explicit_memory.sql", "migrations/018_chat_memory.sql", "migrations/019_reply_to.sql", "migrations/020_forum_state.sql", "migrations/021_user_telegram_profile.sql", "migrations/022_skills_vfs.sql", "migrations/023_message_reactions.sql", "migrations/024_bot_behavior.sql"} {
+		for index, path := range []string{"migrations/001_queue.sql", "migrations/002_bot_messages.sql", "migrations/003_bots_and_access.sql", "migrations/004_poc.sql", "migrations/005_settings.sql", "migrations/006_polling.sql", "migrations/007_runtime_identity.sql", "migrations/008_memory_revision.sql", "migrations/009_mcp.sql", "migrations/010_admin.sql", "migrations/011_telegram.sql", "migrations/012_reply_links.sql", "migrations/013_roles.sql", "migrations/014_audit.sql", "migrations/015_quotas.sql", "migrations/016_setting_scopes.sql", "migrations/017_explicit_memory.sql", "migrations/018_chat_memory.sql", "migrations/019_reply_to.sql", "migrations/020_forum_state.sql", "migrations/021_user_telegram_profile.sql", "migrations/022_skills_vfs.sql", "migrations/023_message_reactions.sql", "migrations/024_bot_behavior.sql", "migrations/025_failure_class.sql"} {
 			version := index + 1
 			if version > target {
 				break

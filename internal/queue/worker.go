@@ -154,9 +154,9 @@ func (w *Worker) execute(parent context.Context, job Job) {
 	dead := terminal || job.Exhausted()
 	w.log.WarnContext(parent, "queue handler failed", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "class", class, "phase", Phase(err), "terminal", terminal, "dead", dead)
 	if terminal {
-		err = w.store.Fail(settleCtx, job.Receipt)
+		err = w.store.Fail(settleCtx, job.Receipt, class)
 	} else {
-		err = w.store.Retry(settleCtx, job.Receipt, w.backoff(job.Attempt))
+		err = w.store.Retry(settleCtx, job.Receipt, w.backoff(job.Attempt), class)
 	}
 	if err != nil {
 		w.log.WarnContext(parent, "queue settlement failed", "job_id", job.ID)

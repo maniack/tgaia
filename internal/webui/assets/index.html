@@ -52,6 +52,11 @@
   <div class="titles"><h1 id="heading">Conversations</h1><p id="subtitle">Choose a bot and chat to inspect its own context.</p></div>
   <div class="tools"><span id="runtime-status" role="status" aria-live="polite">Checking runtime settings…</span><button id="refresh" class="quiet" title="Refresh (R)"><svg class="icon"><use href="#i-refresh"/></svg>Refresh</button></div>
 </header>
+<div id="system-alert" class="system-alert" role="alert" hidden>
+  <span class="system-alert-mark" aria-hidden="true">!</span>
+  <div><strong id="system-alert-title">Connection problem</strong><p id="system-alert-message"></p><small id="system-alert-reference" hidden></small></div>
+  <div class="system-alert-actions"><button id="system-alert-action" class="quiet" type="button">Retry</button><button id="system-alert-dismiss" class="plain" type="button" aria-label="Dismiss error">Dismiss</button></div>
+</div>
 <div id="notice" role="status" aria-live="polite"></div>
 
 <div class="content">

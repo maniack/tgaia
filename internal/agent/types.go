@@ -220,6 +220,7 @@ type Context struct {
 type JobPayload struct {
 	Edited         bool   `json:"edited,omitempty"`
 	SourceUpdateID int64  `json:"source_update_id,omitempty"`
+	FailureClass   string `json:"failure_class,omitempty"`
 	Action         string `json:"action,omitempty"`
 	Text           string `json:"text,omitempty"`
 	Prompt         string `json:"prompt"`

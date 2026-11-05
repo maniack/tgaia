@@ -187,8 +187,30 @@ func TestFailedNoticeRepliesToUser(t *testing.T) {
 	e, _, sender, scope := engineFixture(t)
 	accept(t, e, scope, 1, "long request", true)
 	job := take(t, e, "respond")
+	if err := e.DB.Queue().Fail(context.Background(), job.Receipt, "llm_timeout"); err != nil {
+		t.Fatal(err)
+	}
 	e.Failed(context.Background(), *job, "llm_timeout")
+	if sender.calls != 0 {
+		t.Fatal("failure callback sent outside the durable queue")
+	}
+	notice := take(t, e, "failure_notice")
+	if err := e.FailureNotice(context.Background(), *notice); err != nil {
+		t.Fatal(err)
+	}
 	if sender.calls != 1 {
 		t.Fatalf("expected one failure notice, got %d", sender.calls)
+	}
+	if !strings.Contains(sender.last, "слишком много времени") {
+		t.Fatalf("wrong classified notice: %q", sender.last)
+	}
+}
+
+func TestFailureNoticeVocabularyIsContentFree(t *testing.T) {
+	classes := []string{"llm_429", "llm_http_5xx", "llm_http_4xx", "llm_network", "llm_invalid", "embedding_timeout", "embedding_failed", "mcp_timeout", "mcp_failed", "quota", "budget", "job_timeout", "panic", "handler_error", "other", "unknown"}
+	for _, class := range classes {
+		if text := failureNoticeText(class, false); !strings.HasPrefix(text, "⚠️ ") || strings.Contains(text, class) {
+			t.Fatalf("unsafe or malformed notice for %s: %q", class, text)
+		}
 	}
 }

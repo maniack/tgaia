@@ -51,7 +51,7 @@ func (s *testStore) Complete(ctx context.Context, r Receipt) error {
 	close(s.settled)
 	return nil
 }
-func (s *testStore) Retry(ctx context.Context, r Receipt, delay time.Duration) error {
+func (s *testStore) Retry(ctx context.Context, r Receipt, delay time.Duration, class string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.retries++
@@ -59,7 +59,7 @@ func (s *testStore) Retry(ctx context.Context, r Receipt, delay time.Duration) e
 	close(s.settled)
 	return nil
 }
-func (s *testStore) Fail(ctx context.Context, r Receipt) error {
+func (s *testStore) Fail(ctx context.Context, r Receipt, class string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failed++

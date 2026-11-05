@@ -42,9 +42,9 @@ type Store interface {
 	Claim(context.Context, []string, time.Duration) (*Job, error)
 	Extend(context.Context, Receipt, time.Duration) error
 	Complete(context.Context, Receipt) error
-	Retry(context.Context, Receipt, time.Duration) error
+	Retry(context.Context, Receipt, time.Duration, string) error
 	// Fail retires the job immediately without consuming the remaining attempts.
-	Fail(context.Context, Receipt) error
+	Fail(context.Context, Receipt, string) error
 }
 
 type Handler func(context.Context, Job) error

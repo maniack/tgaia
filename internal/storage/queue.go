@@ -147,17 +147,17 @@ func (q *Queue) Extend(ctx context.Context, r queue.Receipt, lease time.Duration
 func (q *Queue) Complete(ctx context.Context, r queue.Receipt) error {
 	return q.owned(ctx, r, "status='completed',lease_token='',lease_until=0")
 }
-func (q *Queue) Retry(ctx context.Context, r queue.Receipt, delay time.Duration) error {
+func (q *Queue) Retry(ctx context.Context, r queue.Receipt, delay time.Duration, class string) error {
 	if !validDuration(delay) {
 		return errors.New("invalid retry delay")
 	}
-	return q.owned(ctx, r, "status=CASE WHEN attempts>=max_attempts THEN 'dead' ELSE 'retry' END,available_at="+q.now+"+?,lease_token='',lease_until=0", delay.Milliseconds())
+	return q.owned(ctx, r, "status=CASE WHEN attempts>=max_attempts THEN 'dead' ELSE 'retry' END,available_at="+q.now+"+?,failure_class=?,lease_token='',lease_until=0", delay.Milliseconds(), class)
 }
 
 // Fail retires a job after a deterministic failure; the remaining attempts would
 // only repeat the same work against the same input.
-func (q *Queue) Fail(ctx context.Context, r queue.Receipt) error {
-	return q.owned(ctx, r, "status='dead',lease_token='',lease_until=0")
+func (q *Queue) Fail(ctx context.Context, r queue.Receipt, class string) error {
+	return q.owned(ctx, r, "status='dead',failure_class=?,lease_token='',lease_until=0", class)
 }
 
 var ErrNotDead = errors.New("job is not dead")
@@ -170,7 +170,7 @@ func (q *Queue) Replay(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return errors.New("invalid job")
 	}
-	result := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET status='pending',attempts=0,lease_token='',lease_until=0,available_at=`+q.now+`,updated_at=`+q.now+`
+	result := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET status='pending',attempts=0,failure_class='',lease_token='',lease_until=0,available_at=`+q.now+`,updated_at=`+q.now+`
  WHERE id=? AND status='dead' AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE b.agent_id=queue_jobs.agent_id AND b.user_id=queue_jobs.actor_user_id)`, id)
 	if result.Error != nil {
 		return errors.New("queue replay failed")

@@ -34,3 +34,11 @@ func TestDedicatedWebhookRouteIsolation(t *testing.T) {
 		t.Fatalf("default webhook route missing from application listener: %d", status)
 	}
 }
+
+func TestApplicationResponsesCarryRequestID(t *testing.T) {
+	response := httptest.NewRecorder()
+	(&Server{Config: config.App{Role: "worker"}}).Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/missing", nil))
+	if response.Header().Get("X-Request-ID") == "" {
+		t.Fatal("response is missing request ID")
+	}
+}

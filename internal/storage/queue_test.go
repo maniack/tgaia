@@ -20,7 +20,7 @@ import (
 )
 
 func queueDatabases(t *testing.T, driver config.Driver) (*Database, *Database) {
-	return databasesAtVersion(t, driver, 24)
+	return databasesAtVersion(t, driver, 25)
 }
 func databasesAtVersion(t *testing.T, driver config.Driver, version int) (*Database, *Database) {
 	t.Helper()
@@ -123,7 +123,7 @@ func TestQueueConformance(t *testing.T) {
 				}
 				for _, operation := range []func() error{
 					func() error { return q.Complete(ctx, first.Receipt) },
-					func() error { return q.Retry(ctx, first.Receipt, time.Second) },
+					func() error { return q.Retry(ctx, first.Receipt, time.Second, "test") },
 					func() error { return q.Extend(ctx, first.Receipt, time.Minute) },
 				} {
 					if !errors.Is(operation(), queue.ErrLeaseLost) {
@@ -133,7 +133,7 @@ func TestQueueConformance(t *testing.T) {
 				if err := peer.Extend(ctx, replacement.Receipt, time.Minute); err != nil {
 					t.Fatal(err)
 				}
-				if err := peer.Retry(ctx, replacement.Receipt, time.Minute); err != nil {
+				if err := peer.Retry(ctx, replacement.Receipt, time.Minute, "test"); err != nil {
 					t.Fatal(err)
 				}
 				if next, err := q.Claim(ctx, []string{"test"}, time.Minute); err != nil || next != nil {
@@ -144,7 +144,7 @@ func TestQueueConformance(t *testing.T) {
 				if final.Attempt != 3 {
 					t.Fatal("attempt counter incorrect")
 				}
-				if err := q.Retry(ctx, final.Receipt, time.Second); err != nil {
+				if err := q.Retry(ctx, final.Receipt, time.Second, "test"); err != nil {
 					t.Fatal(err)
 				}
 				next := claim(t, peer)
@@ -176,16 +176,16 @@ func TestQueueConformance(t *testing.T) {
 				if first.MaxAttempts != 3 || first.Attempt != 1 || first.Exhausted() {
 					t.Fatalf("attempt budget not reported: %+v", first)
 				}
-				if err := q.Fail(ctx, first.Receipt); err != nil {
+				if err := q.Fail(ctx, first.Receipt, "test_terminal"); err != nil {
 					t.Fatal(err)
 				}
 				if next, err := q.Claim(ctx, []string{"test"}, time.Minute); err != nil || next != nil {
 					t.Fatal("failed job remained claimable")
 				}
-				var status string
-				db.orm.Raw("SELECT status FROM queue_jobs WHERE id=?", first.ID).Scan(&status)
-				if status != "dead" {
-					t.Fatalf("Fail did not retire the job: %s", status)
+				var state struct{ Status, FailureClass string }
+				db.orm.Raw("SELECT status,failure_class FROM queue_jobs WHERE id=?", first.ID).Scan(&state)
+				if state.Status != "dead" || state.FailureClass != "test_terminal" {
+					t.Fatalf("Fail did not persist retirement reason: %+v", state)
 				}
 				if err := q.Replay(ctx, first.ID+100); !errors.Is(err, ErrNotDead) {
 					t.Fatal("replaying an unknown job must fail", err)
