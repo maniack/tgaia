@@ -28,6 +28,7 @@ type Incoming struct {
 	Name           string
 	LanguageCode   string
 	IsPremium      bool
+	IsBot          bool
 	ChatType       string
 	Title          string
 	IsForum        bool
@@ -50,6 +51,7 @@ type Message struct {
 	// Sender identity as last seen (seen_users), so the model can tell people apart.
 	Username string `json:"username,omitempty"`
 	Name     string `json:"name,omitempty"`
+	IsBot    bool   `json:"is_bot,omitempty"`
 	// ReplyToMessageID is the message this one replied to (0 when none).
 	ReplyToMessageID int64 `json:"reply_to_message_id"`
 	// Quoted is the replied-to message when it lies outside the loaded window;
@@ -61,6 +63,9 @@ type Message struct {
 // the reply target, with the quoted text when it is not otherwise visible.
 func (m Message) Header() string {
 	h := fmt.Sprintf("[%s message_id=%d from=%s sender_chat=%d", m.Role, m.MessageID, m.Who(), m.SenderChatID)
+	if m.IsBot {
+		h += " is_bot=true"
+	}
 	if m.ReplyToMessageID > 0 {
 		h += fmt.Sprintf(" reply_to=%d", m.ReplyToMessageID)
 	}
@@ -148,6 +153,17 @@ type TelegramProfile struct {
 	Name         string `json:"name"`
 	LanguageCode string `json:"language_code"`
 	IsPremium    bool   `json:"is_premium"`
+	IsBot        bool   `json:"is_bot"`
+}
+
+type ChatBehavior struct {
+	AgentID        string `json:"agent_id"`
+	BotID          int64  `json:"bot_id"`
+	ChatID         int64  `json:"chat_id"`
+	GroupResponse  string `json:"group_response"`
+	RespondToBots  bool   `json:"respond_to_bots"`
+	LoopProtection bool   `json:"loop_protection"`
+	Version        int64  `json:"version"`
 }
 
 // ReactionUpdate is the current reaction set reported by Telegram for one
@@ -163,6 +179,7 @@ type ReactionUpdate struct {
 	ActorID       int64
 	ActorName     string
 	ActorUsername string
+	ActorIsBot    bool
 	Reactions     []Reaction
 	UpdatedAt     time.Time
 }
@@ -181,6 +198,7 @@ type MessageReaction struct {
 	ActorID       int64
 	ActorName     string
 	ActorUsername string
+	ActorIsBot    bool
 	Type          string
 	Value         string
 	Count         int

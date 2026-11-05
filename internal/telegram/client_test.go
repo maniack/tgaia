@@ -95,22 +95,31 @@ func TestThreadIDRequiresForumTopic(t *testing.T) {
 }
 
 func TestIncomingCarriesTelegramProfile(t *testing.T) {
-	m := &Message{ID: 1, Date: 1, Text: "hello", From: &User{ID: 7, Username: "ada", FirstName: "Ada", LastName: "Lovelace", LanguageCode: "en", IsPremium: true}}
+	m := &Message{ID: 1, Date: 1, Text: "hello", From: &User{ID: 7, Username: "ada", FirstName: "Ada", LastName: "Lovelace", LanguageCode: "en", IsPremium: true, IsBot: true}}
 	m.Chat.ID = 10
 	m.Chat.Type = "private"
 	in, ok := Incoming(Update{ID: 1, Message: m}, "agent", 42, "bot")
-	if !ok || in.Name != "Ada Lovelace" || in.Username != "ada" || in.LanguageCode != "en" || !in.IsPremium {
+	if !ok || in.Name != "Ada Lovelace" || in.Username != "ada" || in.LanguageCode != "en" || !in.IsPremium || !in.IsBot {
 		t.Fatalf("unexpected Telegram profile: %+v", in)
+	}
+}
+
+func TestIncomingIgnoresOwnBotMessages(t *testing.T) {
+	m := &Message{ID: 1, Date: 1, Text: "echo", From: &User{ID: 42, IsBot: true}}
+	m.Chat.ID = -100
+	m.Chat.Type = "supergroup"
+	if _, ok := Incoming(Update{ID: 1, Message: m}, "agent", 42, "bot"); ok {
+		t.Fatal("the bot's own message became incoming conversation input")
 	}
 }
 
 func TestReactionUpdatesArePassiveAndPreserveActors(t *testing.T) {
 	var individual Update
-	if err := json.Unmarshal([]byte(`{"update_id":17,"message_reaction":{"chat":{"id":-100,"type":"supergroup","title":"Team"},"message_id":44,"user":{"id":7,"first_name":"Ada","last_name":"Lovelace","username":"ada"},"date":1700000000,"old_reaction":[],"new_reaction":[{"type":"emoji","emoji":"👍"},{"type":"custom_emoji","custom_emoji_id":"custom-1"}]}}`), &individual); err != nil {
+	if err := json.Unmarshal([]byte(`{"update_id":17,"message_reaction":{"chat":{"id":-100,"type":"supergroup","title":"Team"},"message_id":44,"user":{"id":7,"is_bot":true,"first_name":"Ada","last_name":"Lovelace","username":"ada"},"date":1700000000,"old_reaction":[],"new_reaction":[{"type":"emoji","emoji":"👍"},{"type":"custom_emoji","custom_emoji_id":"custom-1"}]}}`), &individual); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := ReactionUpdate(individual, "agent", 42)
-	if !ok || got.ChatID != -100 || got.MessageID != 44 || got.ActorType != "user" || got.ActorID != 7 || got.ActorName != "Ada Lovelace" || got.ActorUsername != "ada" || len(got.Reactions) != 2 || got.Reactions[0].Value != "👍" || got.Reactions[1].Type != "custom_emoji" {
+	if !ok || got.ChatID != -100 || got.MessageID != 44 || got.ActorType != "user" || got.ActorID != 7 || got.ActorName != "Ada Lovelace" || got.ActorUsername != "ada" || !got.ActorIsBot || len(got.Reactions) != 2 || got.Reactions[0].Value != "👍" || got.Reactions[1].Type != "custom_emoji" {
 		t.Fatalf("unexpected individual reaction: %+v", got)
 	}
 	if _, incoming := Incoming(individual, "agent", 42, "bot"); incoming {

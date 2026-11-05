@@ -129,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 		r.Delete("/api/settings", s.mutation((*Server).deleteSetting))
 		r.Get("/api/prompt", s.prompt)
 		r.Post("/api/prompt", s.mutation((*Server).putPrompt))
+		r.Get("/api/chat-behavior", s.chatBehavior)
+		r.Post("/api/chat-behavior", s.mutation((*Server).putChatBehavior))
 		r.Get("/api/knowledge", s.knowledge)
 		r.Post("/api/knowledge", s.mutation((*Server).putKnowledge))
 		if s.Config.TelegramMode == "mock" {
@@ -495,6 +497,21 @@ func (s *Server) putPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 	result(w, s.DB.Bots().SetPrompt(r.Context(), in.AgentID, in.BotID, in.Prompt))
 }
+func (s *Server) chatBehavior(w http.ResponseWriter, r *http.Request) {
+	behavior, err := s.DB.Agent().ChatBehavior(r.Context(), scope(r))
+	if err != nil {
+		result(w, err)
+		return
+	}
+	send(w, behavior)
+}
+func (s *Server) putChatBehavior(w http.ResponseWriter, r *http.Request) {
+	var behavior agent.ChatBehavior
+	if !read(w, r, &behavior) {
+		return
+	}
+	result(w, s.DB.Agent().SetChatBehavior(r.Context(), behavior))
+}
 func (s *Server) knowledge(w http.ResponseWriter, r *http.Request) {
 	value, version, err := s.DB.Agent().Knowledge(r.Context(), r.URL.Query().Get("agent_id"))
 	if err != nil {
@@ -556,6 +573,8 @@ func (s *Server) demoMessage(w http.ResponseWriter, r *http.Request) {
 		Username     string `json:"username"`
 		LanguageCode string `json:"language_code"`
 		IsPremium    bool   `json:"is_premium"`
+		IsBot        bool   `json:"is_bot"`
+		ChatType     string `json:"chat_type"`
 		Text         string `json:"text"`
 	}
 	if !read(w, r, &in) {
@@ -567,7 +586,10 @@ func (s *Server) demoMessage(w http.ResponseWriter, r *http.Request) {
 			found = true
 		}
 	}
-	if !found || in.UserID <= 0 || in.ReplyMessage < 0 || len(in.Name) > 128 || len(in.Username) > 64 || len(in.LanguageCode) > 16 {
+	if in.ChatType == "" {
+		in.ChatType = "private"
+	}
+	if !found || in.UserID <= 0 || in.ReplyMessage < 0 || len(in.Name) > 128 || len(in.Username) > 64 || len(in.LanguageCode) > 16 || (in.ChatType != "private" && in.ChatType != "group" && in.ChatType != "supergroup") {
 		http.Error(w, "Invalid demo identity", 400)
 		return
 	}
@@ -576,7 +598,7 @@ func (s *Server) demoMessage(w http.ResponseWriter, r *http.Request) {
 		name = fmt.Sprintf("Local user %d", in.UserID)
 	}
 	id := time.Now().UnixMicro()
-	result(w, s.DB.Agent().Accept(r.Context(), agent.Incoming{Scope: chat.Scope{AgentID: s.Config.AgentID, BotID: in.BotID, ChatID: in.ChatID}, UpdateID: id, MessageID: id, UserID: in.UserID, ReplyMessageID: in.ReplyMessage, Name: name, Username: strings.TrimPrefix(strings.TrimSpace(in.Username), "@"), LanguageCode: strings.TrimSpace(in.LanguageCode), IsPremium: in.IsPremium, ChatType: "private", Title: "Local test chat", Text: in.Text, SentAt: time.Now().UTC(), Respond: true}))
+	result(w, s.DB.Agent().Accept(r.Context(), agent.Incoming{Scope: chat.Scope{AgentID: s.Config.AgentID, BotID: in.BotID, ChatID: in.ChatID}, UpdateID: id, MessageID: id, UserID: in.UserID, ReplyMessageID: in.ReplyMessage, Name: name, Username: strings.TrimPrefix(strings.TrimSpace(in.Username), "@"), LanguageCode: strings.TrimSpace(in.LanguageCode), IsPremium: in.IsPremium, IsBot: in.IsBot, ChatType: in.ChatType, Title: "Local test chat", Text: in.Text, SentAt: time.Now().UTC(), Respond: in.ChatType == "private"}))
 }
 
 func (s *Server) messageAction(w http.ResponseWriter, r *http.Request) {

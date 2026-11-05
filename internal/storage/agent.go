@@ -37,7 +37,7 @@ func memoryScoped(db *gorm.DB, s chat.Scope) *gorm.DB {
 // historyWithUsers reads conversation_messages joined with the sender's last
 // seen name and username, so prompts can attribute every line to a person.
 func historyWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
-	return db.Table("conversation_messages AS m").Select("m.*, u.username, u.name").
+	return db.Table("conversation_messages AS m").Select("m.*, u.username, u.name, COALESCE(u.is_bot,FALSE) AS is_bot").
 		Joins("LEFT JOIN seen_users u ON u.agent_id=m.agent_id AND u.user_id=m.user_id").
 		Where("m.agent_id=? AND m.bot_id=? AND m.chat_id=?", s.AgentID, s.BotID, s.ChatID)
 }
@@ -50,7 +50,7 @@ func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=23").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=24").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -75,6 +75,9 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 	if !in.Scope.Valid() || len(in.Attachments) > 10 || in.UpdateID < 0 || in.MessageID <= 0 || len(in.Text) > 64000 {
 		return errors.New("invalid incoming message")
 	}
+	if in.IsBot && in.UserID == in.Scope.BotID {
+		return nil
+	}
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		inserted := tx.Exec("INSERT INTO telegram_inbox (bot_id,update_id) VALUES (?,?) ON CONFLICT DO NOTHING", in.Scope.BotID, in.UpdateID)
 		if inserted.Error != nil {
@@ -90,9 +93,23 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 			return err
 		}
 		if in.UserID > 0 {
-			if err := tx.Exec(`INSERT INTO seen_users (agent_id,user_id,username,name,language_code,is_premium) VALUES (?,?,?,?,?,?) ON CONFLICT (agent_id,user_id) DO UPDATE SET username=excluded.username,name=excluded.name,language_code=excluded.language_code,is_premium=excluded.is_premium`, in.Scope.AgentID, in.UserID, in.Username, in.Name, in.LanguageCode, in.IsPremium).Error; err != nil {
+			role := "user"
+			if in.IsBot {
+				role = "reader"
+			}
+			if err := tx.Exec(`INSERT INTO seen_users (agent_id,user_id,username,name,language_code,is_premium,is_bot,role) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (agent_id,user_id) DO UPDATE SET username=excluded.username,name=excluded.name,language_code=excluded.language_code,is_premium=excluded.is_premium,is_bot=excluded.is_bot`, in.Scope.AgentID, in.UserID, in.Username, in.Name, in.LanguageCode, in.IsPremium, in.IsBot, role).Error; err != nil {
 				return err
 			}
+		}
+		behavior, err := (&AgentStore{db: tx}).ChatBehavior(ctx, in.Scope)
+		if err != nil {
+			return err
+		}
+		if (in.ChatType == "group" || in.ChatType == "supergroup") && behavior.GroupResponse == "all" {
+			in.Respond = true
+		}
+		if in.IsBot && !behavior.RespondToBots {
+			in.Respond = false
 		}
 		if err := (&AgentStore{db: tx}).Check(ctx, in.Scope, in.UserID); err != nil {
 			if errors.Is(err, access.ErrBlocked) || errors.Is(err, ErrChatBlocked) {
@@ -158,6 +175,22 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 			}
 			in.Respond = count > 0
 		}
+		if in.IsBot && !behavior.RespondToBots {
+			in.Respond = false
+		}
+		if in.IsBot && in.Respond && behavior.LoopProtection {
+			// Bound autonomous bot-to-bot exchanges without affecting human
+			// traffic. Disabling the per-bot toggle removes this special limit;
+			// ordinary queue idempotency and global quotas still apply.
+			var recent int64
+			cutoff := time.Now().UTC().Add(-5 * time.Minute).UnixMilli()
+			if err := scoped(tx.Table("queue_jobs"), in.Scope).Where("kind='respond' AND actor_user_id=? AND created_at>=?", in.UserID, cutoff).Count(&recent).Error; err != nil {
+				return err
+			}
+			if recent >= 6 {
+				in.Respond = false
+			}
+		}
 		if !in.Respond || (in.UserID <= 0 && in.SenderChatID == 0) || in.Text == "" {
 			return nil
 		}
@@ -167,6 +200,35 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 	})
 	if err != nil {
 		return errors.New("accepting Telegram update failed")
+	}
+	return nil
+}
+
+func (a *AgentStore) ChatBehavior(ctx context.Context, scope chat.Scope) (agent.ChatBehavior, error) {
+	var behavior agent.ChatBehavior
+	if !scope.Valid() {
+		return behavior, errors.New("invalid conversation scope")
+	}
+	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Select("agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,behavior_version AS version").Take(&behavior).Error
+	if err != nil {
+		return behavior, errors.New("conversation behavior unavailable")
+	}
+	return behavior, nil
+}
+
+func (a *AgentStore) SetChatBehavior(ctx context.Context, behavior agent.ChatBehavior) error {
+	scope := chat.Scope{AgentID: behavior.AgentID, BotID: behavior.BotID, ChatID: behavior.ChatID}
+	if !scope.Valid() || behavior.Version <= 0 || (behavior.GroupResponse != "mentions" && behavior.GroupResponse != "all") {
+		return errors.New("invalid conversation behavior")
+	}
+	result := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Where("behavior_version=?", behavior.Version).Updates(map[string]any{
+		"group_response":   behavior.GroupResponse,
+		"respond_to_bots":  behavior.RespondToBots,
+		"loop_protection":  behavior.LoopProtection,
+		"behavior_version": gorm.Expr("behavior_version+1"),
+	})
+	if result.Error != nil || result.RowsAffected != 1 {
+		return errors.New("conversation behavior version conflict")
 	}
 	return nil
 }

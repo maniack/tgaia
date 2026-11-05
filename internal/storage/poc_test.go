@@ -15,7 +15,7 @@ import (
 func TestPoCStorage(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, peer := databasesAtVersion(t, driver, 23)
+			db, peer := databasesAtVersion(t, driver, 24)
 			ctx := context.Background()
 			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			if err := db.Agent().Ready(ctx); err != nil {
@@ -117,7 +117,7 @@ func TestPoCStorage(t *testing.T) {
 	}
 }
 func TestEncryptedSettings(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 23)
+	db, _ := databasesAtVersion(t, config.SQLite, 24)
 	ctx := context.Background()
 	settings, err := db.Settings(config.NewSecret(strings.Repeat("a", 40)))
 	if err != nil {
@@ -150,7 +150,7 @@ func TestEncryptedSettings(t *testing.T) {
 	}
 }
 func TestPollingLease(t *testing.T) {
-	db, peer := databasesAtVersion(t, config.SQLite, 23)
+	db, peer := databasesAtVersion(t, config.SQLite, 24)
 	ctx := context.Background()
 	offset, owned, err := db.Agent().PollLease(ctx, "test", 1, "owner-a")
 	if err != nil || !owned || offset != 0 {

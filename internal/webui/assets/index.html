@@ -237,6 +237,16 @@
     <div class="editor-status"><span id="bot-prompt-state">Saved</span><span id="bot-prompt-count">0 / 16,000</span></div>
     <div class="sheet-actions"><button id="prompt-save">Save instructions</button></div>
   </form>
+  <form id="chat-behavior-form" class="bot-instructions">
+    <div class="section-head"><div><h2>Conversation behavior</h2><p class="section-lead">Controls when this bot responds in one specific Telegram chat. Receiving and remembering messages is independent from replying.</p></div><div class="controls"><label>Conversation <span class="select"><select id="chat-behavior-scope"></select></span></label></div></div>
+    <div class="card"><div class="form-group">
+      <label class="row"><span>Group messages <small>Mentions and replies, or every message</small></span><span class="select"><select id="chat-group-response"><option value="mentions">Mentions and replies only</option><option value="all">All messages except this bot's own</option></select></span></label>
+      <label class="row"><span>Respond to other bots <small>Bot messages remain visible when disabled</small></span><input id="chat-respond-bots" type="checkbox" class="switch"></label>
+      <label class="row"><span>Bot loop protection <small>At most 6 replies per sender bot in 5 minutes</small></span><input id="chat-loop-protection" type="checkbox" class="switch"></label>
+    </div></div>
+    <p class="help">To receive messages from other bots, enable Bot-to-Bot Communication Mode in @BotFather. The receiving bot must also be a group administrator or have Group Privacy Mode disabled.</p>
+    <div class="sheet-actions"><button id="chat-behavior-save">Save conversation behavior</button></div>
+  </form>
   <div>
     <div class="section-head"><h2>Runtime settings</h2><div class="controls"><label>Scope <span class="select"><select id="settings-scope"><option value="shared">Shared</option><option value="api">API replicas</option><option value="worker">Worker replicas</option></select></span></label></div></div>
     <p class="section-lead">Database values override configuration and apply without restarting. Database connection, OIDC, listener, public URL and process role are managed outside this editor.</p>
@@ -350,6 +360,8 @@
         <label class="row"><span>Username</span><input id="demo-username" maxlength="64" placeholder="username"></label>
         <label class="row"><span>Language</span><input id="demo-language" maxlength="16" placeholder="ru"></label>
         <label class="row"><span>Telegram Premium</span><input id="demo-premium" type="checkbox" class="switch"></label>
+        <label class="row"><span>Sender is a bot</span><input id="demo-is-bot" type="checkbox" class="switch"></label>
+        <label class="row"><span>Chat type</span><span class="select"><select id="demo-chat-type"><option value="private">Private</option><option value="supergroup">Supergroup</option><option value="group">Group</option></select></span></label>
         <label class="row"><span>Reply to message ID</span><input id="demo-reply" type="number" min="1" placeholder="Optional"></label>
         <label class="row stack"><span>Message</span><textarea id="demo-text" rows="3" required placeholder="Напомни через минуту проверить результат"></textarea></label>
       </div>

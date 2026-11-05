@@ -243,7 +243,7 @@ func (a *AgentStore) Dashboard(ctx context.Context) (Dashboard, error) {
 	}{
 		{"SELECT agent_id,bot_id FROM telegram_bots WHERE bot_id>0 ORDER BY agent_id,bot_id LIMIT 200", &result.Bots},
 		{"SELECT * FROM chat_directory ORDER BY agent_id,bot_id,chat_id LIMIT 200", &result.Chats},
-		{"SELECT u.agent_id,u.user_id,u.username,u.name,u.language_code,u.is_premium,u.role,u.version,CASE WHEN b.user_id IS NULL THEN FALSE ELSE TRUE END AS blocked FROM seen_users u LEFT JOIN blocked_users b ON u.agent_id=b.agent_id AND u.user_id=b.user_id ORDER BY u.agent_id,u.user_id LIMIT 200", &result.Users},
+		{"SELECT u.agent_id,u.user_id,u.username,u.name,u.language_code,u.is_premium,u.is_bot,u.role,u.version,CASE WHEN b.user_id IS NULL THEN FALSE ELSE TRUE END AS blocked FROM seen_users u LEFT JOIN blocked_users b ON u.agent_id=b.agent_id AND u.user_id=b.user_id ORDER BY u.agent_id,u.user_id LIMIT 200", &result.Users},
 		{"SELECT * FROM scheduled_tasks ORDER BY run_at,id LIMIT 200", &result.Tasks},
 		{"SELECT d.job_id,d.part,d.state,d.message_id,d.text,j.agent_id,j.bot_id,j.chat_id FROM outbound_deliveries d JOIN queue_jobs j ON j.id=d.job_id ORDER BY d.job_id DESC,d.part LIMIT 100", &result.Deliveries},
 		{"SELECT status,COUNT(*) AS count FROM queue_jobs GROUP BY status", &result.Queue},

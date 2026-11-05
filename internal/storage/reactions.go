@@ -59,8 +59,12 @@ func (a *AgentStore) ApplyReaction(ctx context.Context, update agent.ReactionUpd
 			return err
 		}
 		if update.ActorType == "user" {
-			if err := tx.Exec(`INSERT INTO seen_users (agent_id,user_id,username,name) VALUES (?,?,?,?)
- ON CONFLICT (agent_id,user_id) DO UPDATE SET username=excluded.username,name=excluded.name`, update.AgentID, update.ActorID, update.ActorUsername, update.ActorName).Error; err != nil {
+			role := "user"
+			if update.ActorIsBot {
+				role = "reader"
+			}
+			if err := tx.Exec(`INSERT INTO seen_users (agent_id,user_id,username,name,is_bot,role) VALUES (?,?,?,?,?,?)
+ ON CONFLICT (agent_id,user_id) DO UPDATE SET username=excluded.username,name=excluded.name,is_bot=excluded.is_bot`, update.AgentID, update.ActorID, update.ActorUsername, update.ActorName, update.ActorIsBot, role).Error; err != nil {
 				return err
 			}
 		}
@@ -97,7 +101,7 @@ func loadReactions(db *gorm.DB, scope chat.Scope, limit int) ([]agent.MessageRea
 	var reactions []agent.MessageReaction
 	query := `SELECT r.message_id,r.actor_type,r.actor_id,
  COALESCE(NULLIF(u.name,''),s.actor_name) AS actor_name,
- COALESCE(NULLIF(u.username,''),s.actor_username) AS actor_username,
+ COALESCE(NULLIF(u.username,''),s.actor_username) AS actor_username,COALESCE(u.is_bot,FALSE) AS actor_is_bot,
  r.reaction_type AS type,r.reaction_value AS value,r.total_count AS count,s.updated_at,
  COALESCE(m.text,'') AS message_text
  FROM bot_message_reactions r

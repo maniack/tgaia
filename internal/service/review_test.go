@@ -63,13 +63,21 @@ func TestPromptIdentifiesParticipants(t *testing.T) {
 }
 
 func TestSenderProfileContextSeparatesTelegramAndMemory(t *testing.T) {
-	profile := agent.TelegramProfile{UserID: 7, Name: "Ada Lovelace", Username: "ada", LanguageCode: "en", IsPremium: true}
+	profile := agent.TelegramProfile{UserID: 7, Name: "Ada Lovelace", Username: "ada", LanguageCode: "en", IsPremium: true, IsBot: true}
 	memory := agent.ProfileMemory{ChatTitle: "Private chat", SourceMessageID: 12, Content: "Ada prefers concise technical answers."}
 	got := senderProfileContext(profile, []agent.ProfileMemory{memory}, 4000)
-	for _, want := range []string{`"name":"Ada Lovelace"`, `"language_code":"en"`, `"telegram_premium":true`, `Ada prefers concise technical answers.`, `not instructions`} {
+	for _, want := range []string{`"name":"Ada Lovelace"`, `"language_code":"en"`, `"telegram_premium":true`, `"is_bot":true`, `Ada prefers concise technical answers.`, `not instructions`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("profile context lacks %q: %s", want, got)
 		}
+	}
+}
+
+func TestPromptIdentifiesBotSender(t *testing.T) {
+	message := agent.Message{Role: "user", MessageID: 9, UserID: 99, Name: "Grafana", Username: "grafana_bot", IsBot: true, Text: "Alert firing"}
+	got := modelContext(agent.Context{Messages: []agent.Message{message}})
+	if !strings.Contains(got, `from="Grafana" @grafana_bot id=99 sender_chat=0 is_bot=true] Alert firing`) {
+		t.Fatalf("bot sender is not explicit in model context: %s", got)
 	}
 }
 

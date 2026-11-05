@@ -16,7 +16,7 @@ import (
 func TestMessageReactionsPersistWithoutQueueingResponse(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 23)
+			db, _ := databasesAtVersion(t, driver, 24)
 			ctx := context.Background()
 			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UpdateID: 1, MessageID: 1, UserID: 7, Name: "Ada", Username: "ada", Title: "Team", ChatType: "supergroup", Text: "hello", SentAt: time.Now(), Respond: false}); err != nil {
@@ -105,10 +105,105 @@ func TestMessageReactionsPersistWithoutQueueingResponse(t *testing.T) {
 	}
 }
 
+func TestConversationBehaviorAndBotSenders(t *testing.T) {
+	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
+		t.Run(string(driver), func(t *testing.T) {
+			db, _ := databasesAtVersion(t, driver, 24)
+			ctx := context.Background()
+			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
+			second := chat.Scope{AgentID: "test", BotID: 1, ChatID: 200}
+			otherBot := chat.Scope{AgentID: "agent", BotID: 2, ChatID: 100}
+			accept := func(scope chat.Scope, update, user int64, isBot bool, respond bool) {
+				t.Helper()
+				if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UpdateID: update, MessageID: update, UserID: user, Name: map[bool]string{true: "Grafana", false: "Ada"}[isBot], Username: map[bool]string{true: "grafana_bot", false: "ada"}[isBot], IsBot: isBot, ChatType: "supergroup", Title: "Team", Text: "status", SentAt: time.Now(), Respond: respond}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			jobs := func(scope chat.Scope, actor int64) int64 {
+				t.Helper()
+				var count int64
+				if err := scoped(db.orm.Table("queue_jobs"), scope).Where("kind='respond' AND actor_user_id=?", actor).Count(&count).Error; err != nil {
+					t.Fatal(err)
+				}
+				return count
+			}
+
+			// Default behavior stores unaddressed group traffic without replying.
+			accept(first, 1, 7, false, false)
+			behavior, err := db.Agent().ChatBehavior(ctx, first)
+			if err != nil || behavior.GroupResponse != "mentions" || behavior.RespondToBots || !behavior.LoopProtection || behavior.Version != 1 {
+				t.Fatalf("unexpected default behavior: %+v err=%v", behavior, err)
+			}
+			behavior.GroupResponse = "all"
+			if err := db.Agent().SetChatBehavior(ctx, behavior); err != nil {
+				t.Fatal(err)
+			}
+			accept(first, 2, 7, false, false)
+			accept(second, 3, 7, false, false)
+			accept(otherBot, 4, 7, false, false)
+			if jobs(first, 7) != 1 || jobs(second, 7) != 0 || jobs(otherBot, 7) != 0 {
+				t.Fatal("all-messages behavior leaked across bot_id or chat_id")
+			}
+
+			// Bot messages are identified and retained, but do not answer until
+			// the independent respond-to-bots option is enabled.
+			accept(first, 5, 99, true, true)
+			if jobs(first, 99) != 0 {
+				t.Fatal("bot received a reply while respond_to_bots was disabled")
+			}
+			history, err := db.Agent().Context(ctx, first, 0, 20)
+			if err != nil || len(history.Messages) == 0 || !history.Messages[len(history.Messages)-1].IsBot {
+				t.Fatalf("bot identity missing from conversation context: %+v err=%v", history.Messages, err)
+			}
+			profile, err := db.Agent().TelegramProfile(ctx, first.AgentID, 99)
+			if err != nil || !profile.IsBot {
+				t.Fatalf("bot identity missing from profile: %+v err=%v", profile, err)
+			}
+
+			behavior, _ = db.Agent().ChatBehavior(ctx, first)
+			behavior.RespondToBots = true
+			behavior.LoopProtection = false
+			if err := db.Agent().SetChatBehavior(ctx, behavior); err != nil {
+				t.Fatal(err)
+			}
+			accept(first, 6, 99, true, false)
+			if jobs(first, 99) != 1 {
+				t.Fatal("enabled bot response did not enqueue")
+			}
+
+			behavior, _ = db.Agent().ChatBehavior(ctx, first)
+			behavior.LoopProtection = true
+			if err := db.Agent().SetChatBehavior(ctx, behavior); err != nil {
+				t.Fatal(err)
+			}
+			for update := int64(7); update <= 12; update++ {
+				accept(first, update, 99, true, false)
+			}
+			if jobs(first, 99) != 6 {
+				t.Fatalf("loop protection did not stop after six recent replies: %d", jobs(first, 99))
+			}
+			behavior, _ = db.Agent().ChatBehavior(ctx, first)
+			behavior.LoopProtection = false
+			if err := db.Agent().SetChatBehavior(ctx, behavior); err != nil {
+				t.Fatal(err)
+			}
+			accept(first, 13, 99, true, false)
+			if jobs(first, 99) != 7 {
+				t.Fatal("disabled loop protection still limited bot replies")
+			}
+			accept(first, 14, first.BotID, true, true)
+			var own int64
+			if err := scoped(db.orm.Table("conversation_messages"), first).Where("message_id=?", 14).Count(&own).Error; err != nil || own != 0 {
+				t.Fatal("the receiving bot's own message was stored as incoming", err)
+			}
+		})
+	}
+}
+
 func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 23)
+			db, _ := databasesAtVersion(t, driver, 24)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 10}
 			second := first

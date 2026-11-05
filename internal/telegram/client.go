@@ -21,6 +21,7 @@ import (
 
 type User struct {
 	ID           int64  `json:"id"`
+	IsBot        bool   `json:"is_bot"`
 	Username     string `json:"username"`
 	FirstName    string `json:"first_name"`
 	LastName     string `json:"last_name"`
@@ -144,6 +145,7 @@ func ReactionUpdate(update Update, agentID string, botID int64) (agent.ReactionU
 			result.ActorType, result.ActorID = "user", value.User.ID
 			result.ActorName = strings.TrimSpace(value.User.FirstName + " " + value.User.LastName)
 			result.ActorUsername = value.User.Username
+			result.ActorIsBot = value.User.IsBot
 		case value.ActorChat != nil:
 			result.ActorType, result.ActorID, result.ActorName = "sender_chat", value.ActorChat.ID, value.ActorChat.Title
 		default:
@@ -185,6 +187,11 @@ func Incoming(update Update, agentID string, botID int64, username string) (agen
 	if m == nil {
 		return agent.Incoming{}, false
 	}
+	// Telegram may expose the bot's own messages in newer bot-to-bot modes.
+	// Outbound messages already have an authoritative assistant record.
+	if m.From != nil && m.From.ID == botID {
+		return agent.Incoming{}, false
+	}
 	text := m.Text
 	entities := m.Entities
 	if text == "" {
@@ -202,6 +209,7 @@ func Incoming(update Update, agentID string, botID int64, username string) (agen
 		input.Name = strings.TrimSpace(m.From.FirstName + " " + m.From.LastName)
 		input.LanguageCode = m.From.LanguageCode
 		input.IsPremium = m.From.IsPremium
+		input.IsBot = m.From.IsBot
 		if input.Title == "" {
 			input.Title = m.From.FirstName
 		}

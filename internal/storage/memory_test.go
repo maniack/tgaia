@@ -47,7 +47,7 @@ func TestChatMemoryMigrationCollapsesTopicSummaries(t *testing.T) {
 }
 
 func TestAdminDeleteExplicitMemory(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 23)
+	db, _ := databasesAtVersion(t, config.SQLite, 24)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "remember this", SentAt: time.Now()}); err != nil {
@@ -65,7 +65,7 @@ func TestAdminDeleteExplicitMemory(t *testing.T) {
 }
 
 func TestUserProfileMemoriesAggregateAcrossChats(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 23)
+	db, _ := databasesAtVersion(t, config.SQLite, 24)
 	ctx := context.Background()
 	empty, err := db.Agent().UserProfileMemories(ctx, "test", 7)
 	if err != nil || empty == nil || len(empty) != 0 {
