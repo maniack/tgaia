@@ -68,7 +68,7 @@
     <article class="transcript">
       <div class="scope-head"><button id="conversation-back" class="back-button quiet" type="button" aria-label="Back to conversations">‹</button><div id="scope-heading" class="scope-heading">Select a conversation</div><div id="scope-actions" class="actions"></div></div>
       <div class="transcript-body">
-        <details id="conversation-memory" class="memory" open>
+        <details id="conversation-memory" class="memory">
           <summary><svg class="icon"><use href="#i-brain"/></svg><span>Memory summary</span></summary>
           <p id="summary">The summary for the selected bot and chat will appear here.</p>
         </details>
@@ -164,6 +164,7 @@
         <div id="profile-list" class="profile-list" aria-label="User profiles"></div>
       </div>
       <article class="profile-detail">
+        <button id="profile-back" class="back-button quiet" type="button">‹ Profiles</button>
         <div id="user-profile-identity" class="profile-identity"><strong>Select a profile</strong><small>Choose a person to inspect remembered facts.</small></div>
         <p class="section-lead">This is the same memory the agent uses in conversations. Removing a fact here also removes it from Memory.</p>
         <div id="user-profile-memory" class="profile-memory"><p class="empty">Select a profile.</p></div>
@@ -247,12 +248,15 @@
     <p class="help">To receive messages from other bots, enable Bot-to-Bot Communication Mode in @BotFather. The receiving bot must also be a group administrator or have Group Privacy Mode disabled.</p>
     <div class="sheet-actions"><button id="chat-behavior-save">Save conversation behavior</button></div>
   </form>
+  <details id="advanced-settings" class="advanced-settings">
+    <summary><span>Advanced runtime</span><small>Infrastructure limits, providers and diagnostics</small></summary>
   <div>
     <div class="section-head"><h2>Runtime settings</h2><div class="controls"><label>Scope <span class="select"><select id="settings-scope"><option value="shared">Shared</option><option value="api">API replicas</option><option value="worker">Worker replicas</option></select></span></label></div></div>
     <p class="section-lead">Database values override configuration and apply without restarting. Database connection, OIDC, listener, public URL and process role are managed outside this editor.</p>
     <div class="settings-toolbar"><div class="search"><svg class="icon"><use href="#i-search"/></svg><input id="settings-search" type="search" placeholder="Search settings" aria-label="Search settings" autocomplete="off"></div></div>
   </div>
   <div id="settings-list"></div>
+  </details>
 </section>
 
 </div>
@@ -269,7 +273,7 @@
       <input id="task-id" type="hidden"><input id="task-version" type="hidden">
       <div class="form-group">
         <label class="row"><span>Conversation</span><span class="select"><select id="task-scope" required></select></span></label>
-        <label class="row"><span>Runs as</span><span class="select"><select id="task-user" required></select></span></label>
+        <label class="row"><span>Execute as <small>The user identity and permissions used by the task</small></span><span class="select"><select id="task-user" required></select></span></label>
         <label class="row stack"><span>Prompt</span><textarea id="task-prompt" rows="4" required maxlength="16000" placeholder="What should the bot do when this task runs?"></textarea></label>
       </div>
       <div class="form-label">Schedule</div>
