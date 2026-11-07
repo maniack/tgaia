@@ -291,7 +291,7 @@ func TestCompactionContinuesAfterInputLimit(t *testing.T) {
 }
 func TestClosedModelSchema(t *testing.T) {
 	for _, text := range []string{`{"reply":"ok","scope":"other"}`, `{"reply":"ok","schedule":{"prompt":"x","delay_seconds":1,"interval_seconds":0}}`, `{"reply":"ok","remember":"x"}`, `{"reply":""}`, `{"reply":"ok"} {"reply":"again"}`} {
-		if _, err := decodeResponse(text); err == nil {
+		if _, err := decodeResponse(text, false); err == nil {
 			t.Fatal("invalid model action accepted")
 		}
 	}

@@ -77,20 +77,29 @@ func (q *Queue) Enqueue(ctx context.Context, in queue.Input) (bool, error) {
 }
 
 // BumpAvailableAt extends available_at of the most recent pending respond job
-// from the given user in scope, if one exists and its current available_at is
-// before the given deadline. The payload is updated to the latest message so
-// the eventual reply is anchored to the most recent request. Returns true if
-// a row was updated.
-// BumpAvailableAt extends available_at of the most recent pending respond job
-// from the given user in scope, if one exists and its current available_at is
-// still in the future (i.e. not yet picked up). The payload is replaced with
-// the latest message payload so the eventual reply is anchored to the most
-// recent message. Returns true if a row was updated.
-func (q *Queue) BumpAvailableAt(ctx context.Context, scope chat.Scope, actorUserID int64, newAvailAt int64, payload []byte) (bool, error) {
-	r := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET available_at=?,payload=?,updated_at=`+q.now+`
- WHERE id=(SELECT id FROM queue_jobs WHERE agent_id=? AND bot_id=? AND chat_id=? AND actor_user_id=?
-           AND kind='respond' AND status='pending' AND available_at>=`+q.now+`
-           ORDER BY id DESC LIMIT 1)`, newAvailAt, string(payload), scope.AgentID, scope.BotID, scope.ChatID, actorUserID)
+// from the given sender in the same topic, if it has not been picked up yet.
+// merge receives the job's current payload and returns the replacement, so a
+// caller can anchor the reply to the latest message while keeping flags such
+// as "addressed" from earlier ones. A job is bumped only within
+// maxCoalesceSpans windows of its creation, so a sender posting continuously
+// cannot postpone the reply forever. Returns true if a job was bumped.
+const maxCoalesceSpans = 5
+
+func (q *Queue) BumpAvailableAt(ctx context.Context, scope chat.Scope, actorUserID int64, newAvailAt int64, merge func(old []byte) []byte) (bool, error) {
+	var row struct {
+		ID      int64
+		Payload string
+	}
+	found := q.db.WithContext(ctx).Raw(`SELECT id,payload FROM queue_jobs WHERE agent_id=? AND bot_id=? AND chat_id=? AND thread_id=? AND actor_user_id=?
+           AND kind='respond' AND status='pending' AND available_at>=`+q.now+` AND created_at>=?
+           ORDER BY id DESC LIMIT 1`, scope.AgentID, scope.BotID, scope.ChatID, scope.ThreadID, actorUserID, time.Now().UTC().Add(-maxCoalesceSpans*CoalescingDelay).UnixMilli()).Scan(&row)
+	if found.Error != nil {
+		return false, found.Error
+	}
+	if row.ID == 0 {
+		return false, nil
+	}
+	r := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET available_at=?,payload=?,updated_at=`+q.now+` WHERE id=? AND status='pending' AND available_at>=`+q.now, newAvailAt, string(merge([]byte(row.Payload))), row.ID)
 	if r.Error != nil {
 		return false, r.Error
 	}

@@ -165,8 +165,8 @@ type ChatBehavior struct {
 	LoopProtection bool   `json:"loop_protection"`
 	// ChatToolRounds and ChatToolCalls override the global tool_rounds and
 	// tool_calls limits for this chat. Zero means "use the global default".
-	ChatToolRounds int  `json:"chat_tool_rounds"`
-	ChatToolCalls  int  `json:"chat_tool_calls"`
+	ChatToolRounds int `json:"chat_tool_rounds"`
+	ChatToolCalls  int `json:"chat_tool_calls"`
 	// AllowSkip lets the model reply with skip:true to suppress sending a
 	// message when there is nothing meaningful to say.
 	AllowSkip bool  `json:"allow_skip"`
@@ -225,7 +225,11 @@ type Context struct {
 	Messages         []Message
 }
 type JobPayload struct {
-	Edited         bool   `json:"edited,omitempty"`
+	Edited bool `json:"edited,omitempty"`
+	// Addressed marks a message aimed at the bot (private chat, mention, reply
+	// to the bot) rather than one picked up by group_response=all. Only
+	// unaddressed messages may be answered with skip.
+	Addressed      bool   `json:"addressed,omitempty"`
 	SourceUpdateID int64  `json:"source_update_id,omitempty"`
 	FailureClass   string `json:"failure_class,omitempty"`
 	Action         string `json:"action,omitempty"`

@@ -55,7 +55,7 @@ func TestReplyTargetIsVisibleToTheModel(t *testing.T) {
 // not describe itself from whatever it has read.
 func TestSelfDescriptionComesFromConfiguration(t *testing.T) {
 	e, model, _, scope := engineFixture(t)
-	e.Config = config.App{LLMModel: "gemma-4-26B", MCPServers: []config.MCPServer{{Name: "webtools", Enabled: true}, {Name: "disabled", Enabled: false}}}
+	e.Config = config.App{LLMModel: "gemma-4-26B", Bots: []config.Bot{{ID: 1, Name: "walrus"}}, MCPServers: []config.MCPServer{{Name: "webtools", Enabled: true, Bots: []string{"walrus"}}, {Name: "disabled", Enabled: false, Bots: []string{"*"}}, {Name: "otherbot", Enabled: true, Bots: []string{"other"}}}}
 	e.Identities = map[int64]BotIdentity{1: {Name: "Cyber Walrus", Username: "walrus_bot", Bio: "A concise walrus bio", Description: "A sociable arctic assistant", AvatarPresent: true, AvatarDescription: "A friendly neon-blue cybernetic walrus."}}
 	accept(t, e, scope, 1, "как ты устроен?", true)
 	job := take(t, e, "respond")
@@ -68,8 +68,8 @@ func TestSelfDescriptionComesFromConfiguration(t *testing.T) {
 			t.Fatalf("system prompt lacks %q", want)
 		}
 	}
-	if strings.Contains(system, "disabled") {
-		t.Fatal("disabled MCP server advertised")
+	if strings.Contains(system, "disabled") || strings.Contains(system, "otherbot") {
+		t.Fatal("disabled or other bot's MCP server advertised")
 	}
 }
 

@@ -21,7 +21,7 @@ import (
 var ErrChatBlocked = errors.New("chat is blocked")
 
 // CoalescingDelay is the window during which a second message from the same
-// human sender bumps an existing pending respond job instead of creating a new
+// sender (human or bot) bumps an existing pending respond job instead of creating a new
 // one. Tests may set it to zero to disable coalescing.
 var CoalescingDelay = 3 * time.Second
 
@@ -110,6 +110,7 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 		if err != nil {
 			return err
 		}
+		addressed := in.Respond
 		if (in.ChatType == "group" || in.ChatType == "supergroup") && behavior.GroupResponse == "all" {
 			in.Respond = true
 		}
@@ -179,6 +180,10 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 				return err
 			}
 			in.Respond = count > 0
+			addressed = in.Respond
+		}
+		if old.Role == "assistant" {
+			addressed = false
 		}
 		if in.IsBot && !behavior.RespondToBots {
 			in.Respond = false
@@ -187,6 +192,8 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 			// Bound autonomous bot-to-bot exchanges without affecting human
 			// traffic. Disabling the per-bot toggle removes this special limit;
 			// ordinary queue idempotency and global quotas still apply.
+			// Counted over respond jobs, i.e. replies: messages coalesced into
+			// one job produce one reply and count once.
 			var recent int64
 			cutoff := time.Now().UTC().Add(-5 * time.Minute).UnixMilli()
 			if err := scoped(tx.Table("queue_jobs"), in.Scope).Where("kind='respond' AND actor_user_id=? AND created_at>=?", in.UserID, cutoff).Count(&recent).Error; err != nil {
@@ -199,17 +206,23 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 		if !in.Respond || (in.UserID <= 0 && in.SenderChatID == 0) || in.Text == "" {
 			return nil
 		}
-		payload, _ := json.Marshal(agent.JobPayload{MessageID: in.MessageID, SourceUpdateID: in.UpdateID, Edited: in.Edited})
+		payload, _ := json.Marshal(agent.JobPayload{MessageID: in.MessageID, SourceUpdateID: in.UpdateID, Edited: in.Edited, Addressed: addressed})
 		q := (&Database{orm: tx}).Queue()
-		// Coalesce rapid messages from the same human sender: if a pending respond
-		// job already exists, push its available_at forward by 3 s instead of
-		// creating a second job immediately. The earlier message is already in
+		// Coalesce rapid messages from the same sender (human or bot): if a
+		// pending respond job already exists, push its available_at forward
+		// instead of creating a second job. The earlier message is already in
 		// conversation_messages and will be part of the reply context either way.
-		// Bots are excluded so that loop-protection counting (via queue_jobs) is
-		// not disrupted — bot exchanges must each produce a distinct job row.
-		if !in.IsBot && CoalescingDelay > 0 {
+		if CoalescingDelay > 0 {
 			delay := time.Now().UTC().Add(CoalescingDelay).UnixMilli()
-			bumped, bumpErr := q.BumpAvailableAt(ctx, in.Scope, in.UserID, delay, payload)
+			bumped, bumpErr := q.BumpAvailableAt(ctx, in.Scope, in.UserID, delay, func(old []byte) []byte {
+				var previous agent.JobPayload
+				if json.Unmarshal(old, &previous) != nil || !previous.Addressed || addressed {
+					return payload
+				}
+				// The merged job still answers a message aimed at the bot.
+				merged, _ := json.Marshal(agent.JobPayload{MessageID: in.MessageID, SourceUpdateID: in.UpdateID, Edited: in.Edited, Addressed: true})
+				return merged
+			})
 			if bumpErr != nil {
 				return bumpErr
 			}
