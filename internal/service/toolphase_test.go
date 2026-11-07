@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/maniack/tgaia/internal/llm"
@@ -70,5 +71,27 @@ func TestRoundsWithoutExecutionCloseThePhase(t *testing.T) {
 	}
 	if m.calls != 2 || m.finals != 1 || sender.calls != 1 {
 		t.Fatalf("turns=%d finals=%d sends=%d", m.calls, m.finals, sender.calls)
+	}
+}
+
+// Without a tool phase the final prompt forbids claiming any lookup.
+func TestNoToolPhaseForbidsVerificationClaims(t *testing.T) {
+	e, model, _, scope := engineFixture(t) // testModel has no tool support.
+	accept(t, e, scope, 1, "проверь статус", true)
+	job := take(t, e, "respond")
+	if err := e.Respond(context.Background(), *job); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DB.Queue().Complete(context.Background(), job.Receipt); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(model.input[0].Content, "No tools were used for this reply") {
+		t.Fatal("final prompt lacks the no-tools rule")
+	}
+	m := &scriptedModel{reply: `{"reply":"ok"}`}
+	e.Model = m
+	accept(t, e, scope, 2, "ещё раз", true)
+	if err := e.Respond(context.Background(), *take(t, e, "respond")); err == nil && strings.Contains(m.finalInput[0].Content, "No tools were used") {
+		t.Fatal("no-tools rule added although a tool phase ran")
 	}
 }

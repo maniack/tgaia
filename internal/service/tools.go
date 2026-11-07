@@ -34,6 +34,9 @@ type toolOutcome struct {
 	Messages      []llm.Message
 	Confirmations []string
 	Failed        int
+	// Ran reports that a tool phase took place, so the closing instructions
+	// about tool results are already in Messages.
+	Ran bool
 }
 
 // toolContext runs the tool phase and reconstructs its transcript from durable
@@ -289,6 +292,7 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 	}
 	input = append(input, llm.Message{Role: "user", Content: closing})
 	outcome.Messages = input
+	outcome.Ran = true
 	return outcome, nil
 }
 

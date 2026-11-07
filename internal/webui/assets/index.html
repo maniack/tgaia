@@ -249,6 +249,11 @@
       <label class="row"><span>Group messages <small>Mentions and replies, or every message</small></span><span class="select"><select id="chat-group-response"><option value="mentions">Mentions and replies only</option><option value="all">All messages except this bot's own</option></select></span></label>
       <label class="row"><span>Respond to other bots <small>Bot messages remain visible when disabled</small></span><input id="chat-respond-bots" type="checkbox" class="switch"></label>
       <label class="row"><span>Bot loop protection <small>At most 6 replies per sender bot in 5 minutes</small></span><input id="chat-loop-protection" type="checkbox" class="switch"></label>
+      <label class="row"><span>Allow silence <small>The bot may stay silent on messages not addressed to it; mentions, replies and private messages are always answered</small></span><input id="chat-allow-skip" type="checkbox" class="switch"></label>
+    </div></div>
+    <div class="card"><div class="form-group">
+      <label class="row"><span>Tool rounds <small>Per reply in this chat; 0 uses the global limit, larger values are capped by it</small></span><input id="chat-tool-rounds" type="number" min="0" max="32" value="0"></label>
+      <label class="row"><span>Tool calls <small>Per reply in this chat; 0 uses the global limit, larger values are capped by it</small></span><input id="chat-tool-calls" type="number" min="0" max="64" value="0"></label>
     </div></div>
     <p class="help">To receive messages from other bots, enable Bot-to-Bot Communication Mode in @BotFather. The receiving bot must also be a group administrator or have Group Privacy Mode disabled.</p>
     <div class="sheet-actions"><button id="chat-behavior-save">Save conversation behavior</button></div>

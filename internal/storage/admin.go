@@ -67,7 +67,7 @@ func (a *AgentStore) AdminPage(ctx context.Context, kind, cursor string, limit i
 		if !scope.Valid() {
 			return result, errors.New("history requires a valid scope")
 		}
-		query = `SELECT m.*,u.username,u.name,COALESCE(u.is_bot,FALSE) AS is_bot
+		query = `SELECT m.*,u.username,u.name,COALESCE(u.is_bot,FALSE) AS is_bot,COALESCE(u.role,'') AS sender_role
  FROM conversation_messages m
  JOIN chat_directory c ON c.agent_id=m.agent_id AND c.bot_id=m.bot_id AND c.chat_id=m.chat_id
  LEFT JOIN seen_users u ON u.agent_id=m.agent_id AND u.user_id=m.user_id
