@@ -392,7 +392,8 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 			if !tools.Ran {
 				// No tool phase: nothing was looked up for this reply, whatever the
 				// bot's instructions say it usually does.
-				request[0].Content += "\nNo tools were used for this reply. Do not claim to have checked, looked up, queried, verified, confirmed, scheduled or remembered anything now; answer only from the conversation and your instructions, and say so when a request needs data you did not obtain."
+				noTools, _ := prompts.ReadFile("prompts/no_tools.txt")
+				request[0].Content += "\n" + strings.TrimSpace(string(noTools))
 			}
 		}
 		// The user-facing reply always comes from this closed-schema call. The
