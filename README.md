@@ -88,15 +88,31 @@ memory keys include `(agent_id, bot_id, chat_id, thread_id)`. A blocked user ID 
 all bots/chats of its agent. The UI also supports chat blocks, task CRUD, knowledge,
 settings, bot prompts and queued edit/delete actions for known bot message IDs.
 
-Everything the bot does for itself goes through built-in tools in the tool phase:
-`task_list`/`task_create`/`task_update`/`task_delete` for scheduled and recurring
-tasks and `memory_list`/`memory_save`/`memory_delete` for explicit facts. The
-final model call can only write the reply text. `task_create` takes the user's words
-(weekday or date, wall-clock time, IANA timezone, or a relative delay); the code
-computes the first run, returns it to the model and appends the same computed time to
-the delivered reply, so the user never sees a time the model worked out itself. The
-tool phase is structural: every turn is a function call (`tool_choice: required`) and
-ends with `phase_finish(note ≤ 300 chars)`, so the answer is generated once.
+Each bot has exactly one prompt: its text in the database (Web UI → Bot instructions),
+or `config/system-prompt.md` when that is empty. Every run of the bot — a reply, a due
+scheduled task, memory compaction, describing an image or its own avatar — is the same
+agent loop with that prompt. Code adds only data after it (runtime facts, platform
+capabilities, approved behaviour corrections, chat context and an `Event` JSON such as
+`message`, `message_edited`, `scheduled_task_due` or `memory_compaction`) and the tools
+the bot may use; it never adds instructions. Every turn is a function call
+(`tool_choice: required`) and a run ends with a terminal tool: `reply(text)` or `skip()`
+(only for messages not addressed to the bot when the chat allows silence),
+`memory_save_summary(summary, corrections)` or `image_describe(text)`. Mechanics, not
+prompts, keep the loop bounded: after the round/call budget, two rounds in which nothing
+executed or an unknown tool outcome only terminal tools are offered; a turn cut off by the
+token limit is retried without thinking; plain text instead of a call is retried once with
+terminal tools only and then delivered as the reply.
+
+Built-in tools cover the bot's own state: `task_list`/`task_create`/`task_update`/
+`task_delete` for scheduled and recurring tasks and `memory_list`/`memory_save`/
+`memory_delete` for explicit facts. `task_create` takes the user's words (weekday or
+date, wall-clock time, IANA timezone, or a relative delay); the code computes the first
+run, returns it to the model and appends the same computed time to the delivered reply,
+so the user never sees a time the model worked out itself.
+
+During compaction the bot may propose behaviour corrections for that chat. They appear
+under Conversation behavior → Behaviour corrections; only approved ones are added to the
+bot's data, and a per-chat switch approves them automatically.
 Explicit requests such as “remember that …” are persisted with the application's
 current conversation scope; the model cannot select another bot or chat. Set `app.memory.embedding_model: bge-m3` (or
 `TGAIA_MEMORY_EMBEDDING_MODEL`) to use the configured OpenAI-compatible LLM endpoint

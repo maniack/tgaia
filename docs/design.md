@@ -412,12 +412,13 @@ Service/telegram tests, race, vet and CGO-free build passed. Visual typing behav
 
 Full tests, config/service/app vet and CGO-free build passed on the Go version declared in `go.mod`. Manual startup verified polling, Markdown fallback and typing support without retaining private runtime artifacts in the repository.
 
-The embedded `respond.txt` is persona-neutral application protocol: it defines the
-structured response envelope, action criteria and scope boundaries. The per-bot DB
-prompt, or `config/system-prompt.md` when no DB override exists, is appended under an
-explicit administrator-instructions section and owns persona, tone, style and language.
-Thus a custom pirate/teacher/domain persona does not conflict with a built-in assistant
-persona. Schema, permission and scope checks are still enforced by application code.
+Superseded (2026-11-07): there is no embedded protocol prompt any more. The per-bot DB
+prompt, or `config/system-prompt.md` when no DB override exists, is the bot's only prompt
+and is used unchanged for replies, scheduled runs, compaction and image description.
+Situational behaviour is expressed as data (the `Event` JSON, offered tools) and as
+loop mechanics; schema, permission and scope checks are still enforced by code. Model-
+specific adjustments come from behaviour corrections the bot proposes during compaction
+and an operator approves (or auto-approves per chat).
 
 ## 24. Build and test Makefile
 
