@@ -195,7 +195,24 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 			return nil
 		}
 		payload, _ := json.Marshal(agent.JobPayload{MessageID: in.MessageID, SourceUpdateID: in.UpdateID, Edited: in.Edited})
-		_, err = (&Database{orm: tx}).Queue().Enqueue(ctx, queue.Input{Scope: in.Scope, ActorUserID: in.UserID, SenderChatID: in.SenderChatID, Key: fmt.Sprintf("update:%d", in.UpdateID), Kind: "respond", Payload: payload, MaxAttempts: 3})
+		q := (&Database{orm: tx}).Queue()
+		// Coalesce rapid messages from the same human sender: if a pending respond
+		// job already exists, push its available_at forward by 3 s instead of
+		// creating a second job immediately. The earlier message is already in
+		// conversation_messages and will be part of the reply context either way.
+		// Bots are excluded so that loop-protection counting (via queue_jobs) is
+		// not disrupted — bot exchanges must each produce a distinct job row.
+		if !in.IsBot {
+			delay := time.Now().UTC().Add(3 * time.Second).UnixMilli()
+			bumped, bumpErr := q.BumpAvailableAt(ctx, in.Scope, in.UserID, delay)
+			if bumpErr != nil {
+				return bumpErr
+			}
+			if bumped {
+				return nil
+			}
+		}
+		_, err = q.Enqueue(ctx, queue.Input{Scope: in.Scope, ActorUserID: in.UserID, SenderChatID: in.SenderChatID, Key: fmt.Sprintf("update:%d", in.UpdateID), Kind: "respond", Payload: payload, MaxAttempts: 3})
 		return err
 	})
 	if err != nil {

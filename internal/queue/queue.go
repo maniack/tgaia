@@ -19,6 +19,7 @@ type Input struct {
 	Kind         string
 	Payload      []byte
 	MaxAttempts  int
+	AvailableAt  int64 // Unix milliseconds; zero means now.
 }
 type Receipt struct {
 	ID    int64

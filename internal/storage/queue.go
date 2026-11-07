@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/maniack/tgaia/internal/access"
+	"github.com/maniack/tgaia/internal/chat"
 	"github.com/maniack/tgaia/internal/queue"
 	"gorm.io/gorm"
 )
@@ -51,8 +52,18 @@ func (q *Queue) Enqueue(ctx context.Context, in queue.Input) (bool, error) {
 				return err
 			}
 		}
+		availAt := q.now
+		var availAtArg any
+		if in.AvailableAt > 0 {
+			availAt = "?"
+			availAtArg = in.AvailableAt
+		}
+		args := []any{in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Scope.ThreadID, in.SenderChatID, in.ActorUserID, in.Key, in.Kind, string(in.Payload), in.MaxAttempts}
+		if availAtArg != nil {
+			args = append(args, availAtArg)
+		}
 		result := tx.Exec(`INSERT INTO queue_jobs (agent_id,bot_id,chat_id,thread_id,sender_chat_id,actor_user_id,dedupe_key,kind,payload,status,max_attempts,available_at,created_at,updated_at)
- VALUES (?,?,?,?,?,?,?,?,?,'pending',?,`+q.now+`,`+q.now+`,`+q.now+`) ON CONFLICT (agent_id,bot_id,chat_id,dedupe_key) DO NOTHING`, in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Scope.ThreadID, in.SenderChatID, in.ActorUserID, in.Key, in.Kind, string(in.Payload), in.MaxAttempts)
+ VALUES (?,?,?,?,?,?,?,?,?,'pending',?,`+availAt+`,`+q.now+`,`+q.now+`) ON CONFLICT (agent_id,bot_id,chat_id,dedupe_key) DO NOTHING`, args...)
 		applied = result.RowsAffected == 1
 		return result.Error
 	})
@@ -63,6 +74,21 @@ func (q *Queue) Enqueue(ctx context.Context, in queue.Input) (bool, error) {
 		return false, errors.New("queue enqueue failed")
 	}
 	return applied, nil
+}
+
+// BumpAvailableAt extends available_at of the most recent pending respond job
+// from the given user in scope, if one exists and its current available_at is
+// before the given deadline. Returns true if a row was updated.
+func (q *Queue) BumpAvailableAt(ctx context.Context, scope chat.Scope, actorUserID int64, newAvailAt int64) (bool, error) {
+	r := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET available_at=?,updated_at=`+q.now+`
+ WHERE id=(SELECT id FROM queue_jobs WHERE agent_id=? AND bot_id=? AND chat_id=? AND actor_user_id=?
+           AND kind='respond' AND status='pending' AND available_at>=`+q.now+`
+           ORDER BY id DESC LIMIT 1)
+ AND available_at<?`, newAvailAt, scope.AgentID, scope.BotID, scope.ChatID, actorUserID, newAvailAt)
+	if r.Error != nil {
+		return false, r.Error
+	}
+	return r.RowsAffected == 1, nil
 }
 
 type claimedJob struct {
