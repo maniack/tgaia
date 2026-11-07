@@ -150,6 +150,12 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 				forced = true
 				continue
 			}
+			if class, _ := queue.Classify(err); draft != "" && (class == "llm_invalid" || truncated(err)) {
+				// The retry after a prose answer came back empty or broken:
+				// the model considers its text the answer, and so do we.
+				result.Prose = draft
+				return result, nil
+			}
 			if err != nil {
 				return result, queue.WithPhase(err, phase)
 			}

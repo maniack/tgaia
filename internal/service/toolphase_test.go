@@ -80,3 +80,28 @@ func TestTighterCap(t *testing.T) {
 		}
 	}
 }
+
+// emptyAfterProse answers in prose, then fails the terminal-only retry the
+// way a provider does when the model returns nothing.
+type emptyAfterProse struct{ calls int }
+
+func (m *emptyAfterProse) Complete(context.Context, []llm.Message) (string, error) { return "", nil }
+func (m *emptyAfterProse) CompleteTools(context.Context, []llm.Message, []llm.Tool) (llm.Message, error) {
+	m.calls++
+	if m.calls == 1 {
+		return llm.Message{Role: "assistant", Content: "Задач нет."}, nil
+	}
+	return llm.Message{}, queue.Fail("llm_invalid", false, nil)
+}
+
+func TestEmptyRetryAfterProseDeliversTheProse(t *testing.T) {
+	e, _, sender, scope := engineFixture(t)
+	e.Model = &emptyAfterProse{}
+	accept(t, e, scope, 1, "какие задачи?", true)
+	if err := e.Respond(context.Background(), *take(t, e, "respond")); err != nil {
+		t.Fatal(err)
+	}
+	if sender.last != "Задач нет." {
+		t.Fatalf("delivered %q", sender.last)
+	}
+}

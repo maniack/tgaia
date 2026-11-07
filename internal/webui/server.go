@@ -130,6 +130,8 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/prompt", s.prompt)
 		r.Post("/api/prompt", s.mutation((*Server).putPrompt))
 		r.Post("/api/bot-tool-limits", s.mutation((*Server).putBotToolLimits))
+		r.Get("/api/corrections", s.corrections)
+		r.Post("/api/corrections", s.mutation((*Server).putCorrection))
 		r.Get("/api/chat-behavior", s.chatBehavior)
 		r.Post("/api/chat-behavior", s.mutation((*Server).putChatBehavior))
 		r.Get("/api/knowledge", s.knowledge)
@@ -528,6 +530,31 @@ func (s *Server) putPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result(w, s.DB.Bots().SetPrompt(r.Context(), in.AgentID, in.BotID, in.Prompt, s.Config.Limit("system_prompt_bytes")))
+}
+func (s *Server) corrections(w http.ResponseWriter, r *http.Request) {
+	list, err := s.DB.Agent().Corrections(r.Context(), scope(r), "")
+	if err != nil {
+		result(w, err)
+		return
+	}
+	if list == nil {
+		list = []agent.Correction{}
+	}
+	send(w, list)
+}
+func (s *Server) putCorrection(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID string `json:"agent_id"`
+		BotID   int64  `json:"bot_id"`
+		ChatID  int64  `json:"chat_id"`
+		ID      int64  `json:"id"`
+		Version int64  `json:"version"`
+		Action  string `json:"action"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Agent().SetCorrection(r.Context(), chat.Scope{AgentID: in.AgentID, BotID: in.BotID, ChatID: in.ChatID}, in.ID, in.Version, in.Action))
 }
 func (s *Server) chatBehavior(w http.ResponseWriter, r *http.Request) {
 	behavior, err := s.DB.Agent().ChatBehavior(r.Context(), scope(r))

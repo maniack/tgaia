@@ -258,11 +258,14 @@
       <label class="row"><span>Respond to other bots <small>Bot messages remain visible when disabled</small></span><input id="chat-respond-bots" type="checkbox" class="switch"></label>
       <label class="row"><span>Bot loop protection <small>At most 6 replies per sender bot in 5 minutes</small></span><input id="chat-loop-protection" type="checkbox" class="switch"></label>
       <label class="row"><span>Allow silence <small>May stay silent on messages not addressed to it</small></span><input id="chat-allow-skip" type="checkbox" class="switch"></label>
+      <label class="row"><span>Auto-approve corrections <small>Apply the bot's own behaviour corrections here without review</small></span><input id="chat-auto-corrections" type="checkbox" class="switch"></label>
       <label class="row"><span>Tool rounds <small>Per reply here; 0 keeps the bot and global limits</small></span><input id="chat-tool-rounds" type="number" min="0" max="32" value="0"></label>
       <label class="row"><span>Tool calls <small>Per reply here; 0 keeps the bot and global limits</small></span><input id="chat-tool-calls" type="number" min="0" max="64" value="0"></label>
     </div></div>
     <p class="help">To receive messages from other bots, enable Bot-to-Bot Communication Mode in @BotFather. The receiving bot must also be a group administrator or have Group Privacy Mode disabled.</p>
     <div class="sheet-actions"><button id="chat-behavior-save">Save conversation behavior</button></div>
+    <div class="section-head"><div><h2>Behaviour corrections</h2><p class="section-lead">Changes the bot proposed for itself in this conversation while updating its memory. Only approved corrections are added to its context.</p></div></div>
+    <div class="card"><div id="chat-corrections" class="memory-facts"></div></div>
   </form>
   <details id="advanced-settings" class="advanced-settings">
     <summary><span>Advanced runtime</span><small>Infrastructure limits, providers and diagnostics</small></summary>

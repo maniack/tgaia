@@ -407,6 +407,8 @@ dialog.alert .buttons button.destructive-text { background: var(--fill-3); color
 .memory-fact p { grid-column: 1; color: var(--label); font-size: 14px; }
 .memory-fact small { grid-column: 1; }
 .memory-fact button { grid-column: 2; grid-row: 1 / 3; align-self: center; min-height: 30px; }
+.memory-fact .correction-actions { grid-column: 2; grid-row: 1 / 3; align-self: center; display: flex; gap: 6px; }
+.memory-fact .correction-actions button { min-height: 30px; }
 .profiles-layout { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .profiles-roster, .profile-detail { min-width: 0; }
 .profiles-roster .section-head { padding-top: 0; }
