@@ -163,7 +163,11 @@ type ChatBehavior struct {
 	GroupResponse  string `json:"group_response"`
 	RespondToBots  bool   `json:"respond_to_bots"`
 	LoopProtection bool   `json:"loop_protection"`
-	Version        int64  `json:"version"`
+	// ChatToolRounds and ChatToolCalls override the global tool_rounds and
+	// tool_calls limits for this chat. Zero means "use the global default".
+	ChatToolRounds int   `json:"chat_tool_rounds"`
+	ChatToolCalls  int   `json:"chat_tool_calls"`
+	Version        int64 `json:"version"`
 }
 
 // ReactionUpdate is the current reaction set reported by Telegram for one

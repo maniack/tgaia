@@ -45,7 +45,8 @@ type toolOutcome struct {
 // user-facing answer here; that happens once, in the final closed-schema call.
 // requestedAt anchors relative delays ("in 5 minutes") to the moment the user
 // asked, not to when the worker got around to it.
-func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.JobPayload, requestedAt time.Time, request []llm.Message) (toolOutcome, error) {
+// chatToolRounds and chatToolCalls are per-chat overrides; zero means use the global limit.
+func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.JobPayload, requestedAt time.Time, request []llm.Message, chatToolRounds, chatToolCalls int) (toolOutcome, error) {
 	outcome := toolOutcome{Messages: request}
 	if job.SenderChatID != 0 {
 		return outcome, nil
@@ -97,11 +98,19 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 	} else {
 		input[0].Content = string(guidance) + "\n" + input[0].Content
 	}
+	maxRounds := e.Config.Limit("tool_rounds")
+	if chatToolRounds > 0 && chatToolRounds < maxRounds {
+		maxRounds = chatToolRounds
+	}
+	maxCalls := e.Config.Limit("tool_calls")
+	if chatToolCalls > 0 && chatToolCalls < maxCalls {
+		maxCalls = chatToolCalls
+	}
 	calls := 0
 	uncertain := false
 	finished := false
 	last := "" // Previous call signature; models sometimes loop on one call.
-	for round := 0; round < e.Config.Limit("tool_rounds") && !finished; round++ {
+	for round := 0; round < maxRounds && !finished; round++ {
 		if err := e.DB.Agent().CheckActions(toolCtx, job.Scope, job.ActorUserID); err != nil {
 			return outcome, err
 		}
@@ -141,7 +150,7 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 			}
 			break
 		}
-		if len(message.ToolCalls) > e.Config.Limit("tool_calls")-calls {
+		if len(message.ToolCalls) > maxCalls-calls {
 			return outcome, errors.New("model exceeded tool call budget")
 		}
 		message.Content = clipNote(message.Content)
@@ -240,7 +249,7 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 			}
 			input = append(input, llm.Message{Role: "tool", ToolCallID: call.ID, Content: output})
 		}
-		if calls >= e.Config.Limit("tool_calls") || uncertain {
+		if calls >= maxCalls || uncertain {
 			break
 		}
 	}

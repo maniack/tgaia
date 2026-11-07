@@ -253,6 +253,10 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		}
 	}
 	rewrite := len(prior) > 0
+	behavior, err := store.ChatBehavior(ctx, job.Scope)
+	if err != nil {
+		return err
+	}
 	stored, err := store.Result(ctx, job.ID)
 	if err != nil {
 		return err
@@ -334,7 +338,7 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		if rewrite {
 			request[0].Content += "\nThe user edited the source message. Revise your previous answer; it will replace the existing bot reply. Tools are unavailable in this revision: do not repeat or undo earlier actions, and do not claim anything was scheduled, remembered or undone now."
 		} else {
-			tools, err = e.toolContext(ctx, job, payload, requestedAt, request)
+			tools, err = e.toolContext(ctx, job, payload, requestedAt, request, behavior.ChatToolRounds, behavior.ChatToolCalls)
 			if err != nil {
 				return err
 			}

@@ -15,7 +15,7 @@ import (
 func TestAdminPaginationAndResolution(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, peer := databasesAtVersion(t, driver, 24)
+			db, peer := databasesAtVersion(t, driver, 26)
 			ctx := context.Background()
 			sc := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			for i := int64(1); i <= 125; i++ {
@@ -130,7 +130,7 @@ func TestAdminPaginationAndResolution(t *testing.T) {
 func TestAdminConversationListUsesForumState(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 24)
+			db, _ := databasesAtVersion(t, driver, 26)
 			ctx := context.Background()
 			ordinary := chat.Scope{AgentID: "test", BotID: 1, ChatID: 300}
 			if err := db.Agent().Accept(ctx, agent.Incoming{Scope: ordinary, UpdateID: 1000, MessageID: 1, UserID: 7, Title: "ordinary", ChatType: "supergroup", Text: "root", SentAt: time.Now()}); err != nil {

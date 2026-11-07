@@ -78,13 +78,19 @@ func (q *Queue) Enqueue(ctx context.Context, in queue.Input) (bool, error) {
 
 // BumpAvailableAt extends available_at of the most recent pending respond job
 // from the given user in scope, if one exists and its current available_at is
-// before the given deadline. Returns true if a row was updated.
-func (q *Queue) BumpAvailableAt(ctx context.Context, scope chat.Scope, actorUserID int64, newAvailAt int64) (bool, error) {
-	r := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET available_at=?,updated_at=`+q.now+`
+// before the given deadline. The payload is updated to the latest message so
+// the eventual reply is anchored to the most recent request. Returns true if
+// a row was updated.
+// BumpAvailableAt extends available_at of the most recent pending respond job
+// from the given user in scope, if one exists and its current available_at is
+// still in the future (i.e. not yet picked up). The payload is replaced with
+// the latest message payload so the eventual reply is anchored to the most
+// recent message. Returns true if a row was updated.
+func (q *Queue) BumpAvailableAt(ctx context.Context, scope chat.Scope, actorUserID int64, newAvailAt int64, payload []byte) (bool, error) {
+	r := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET available_at=?,payload=?,updated_at=`+q.now+`
  WHERE id=(SELECT id FROM queue_jobs WHERE agent_id=? AND bot_id=? AND chat_id=? AND actor_user_id=?
            AND kind='respond' AND status='pending' AND available_at>=`+q.now+`
-           ORDER BY id DESC LIMIT 1)
- AND available_at<?`, newAvailAt, scope.AgentID, scope.BotID, scope.ChatID, actorUserID, newAvailAt)
+           ORDER BY id DESC LIMIT 1)`, newAvailAt, string(payload), scope.AgentID, scope.BotID, scope.ChatID, actorUserID)
 	if r.Error != nil {
 		return false, r.Error
 	}

@@ -20,6 +20,11 @@ import (
 
 var ErrChatBlocked = errors.New("chat is blocked")
 
+// CoalescingDelay is the window during which a second message from the same
+// human sender bumps an existing pending respond job instead of creating a new
+// one. Tests may set it to zero to disable coalescing.
+var CoalescingDelay = 3 * time.Second
+
 type AgentStore struct{ db *gorm.DB }
 
 func (d *Database) Agent() *AgentStore { return &AgentStore{db: d.orm} }
@@ -50,7 +55,7 @@ func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=24").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=26").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -202,15 +207,19 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 		// conversation_messages and will be part of the reply context either way.
 		// Bots are excluded so that loop-protection counting (via queue_jobs) is
 		// not disrupted — bot exchanges must each produce a distinct job row.
-		if !in.IsBot {
-			delay := time.Now().UTC().Add(3 * time.Second).UnixMilli()
-			bumped, bumpErr := q.BumpAvailableAt(ctx, in.Scope, in.UserID, delay)
+		if !in.IsBot && CoalescingDelay > 0 {
+			delay := time.Now().UTC().Add(CoalescingDelay).UnixMilli()
+			bumped, bumpErr := q.BumpAvailableAt(ctx, in.Scope, in.UserID, delay, payload)
 			if bumpErr != nil {
 				return bumpErr
 			}
 			if bumped {
 				return nil
 			}
+			// First message from this sender: enqueue with the coalescing window so
+			// that a follow-up message can still bump available_at before the job fires.
+			_, err = q.Enqueue(ctx, queue.Input{Scope: in.Scope, ActorUserID: in.UserID, SenderChatID: in.SenderChatID, Key: fmt.Sprintf("update:%d", in.UpdateID), Kind: "respond", Payload: payload, MaxAttempts: 3, AvailableAt: delay})
+			return err
 		}
 		_, err = q.Enqueue(ctx, queue.Input{Scope: in.Scope, ActorUserID: in.UserID, SenderChatID: in.SenderChatID, Key: fmt.Sprintf("update:%d", in.UpdateID), Kind: "respond", Payload: payload, MaxAttempts: 3})
 		return err
@@ -226,7 +235,7 @@ func (a *AgentStore) ChatBehavior(ctx context.Context, scope chat.Scope) (agent.
 	if !scope.Valid() {
 		return behavior, errors.New("invalid conversation scope")
 	}
-	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Select("agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,behavior_version AS version").Take(&behavior).Error
+	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Select("agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,chat_tool_rounds,chat_tool_calls,behavior_version AS version").Take(&behavior).Error
 	if err != nil {
 		return behavior, errors.New("conversation behavior unavailable")
 	}
@@ -238,10 +247,15 @@ func (a *AgentStore) SetChatBehavior(ctx context.Context, behavior agent.ChatBeh
 	if !scope.Valid() || behavior.Version <= 0 || (behavior.GroupResponse != "mentions" && behavior.GroupResponse != "all") {
 		return errors.New("invalid conversation behavior")
 	}
+	if behavior.ChatToolRounds < 0 || behavior.ChatToolRounds > 32 || behavior.ChatToolCalls < 0 || behavior.ChatToolCalls > 64 {
+		return errors.New("chat tool limits out of range")
+	}
 	result := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Where("behavior_version=?", behavior.Version).Updates(map[string]any{
 		"group_response":   behavior.GroupResponse,
 		"respond_to_bots":  behavior.RespondToBots,
 		"loop_protection":  behavior.LoopProtection,
+		"chat_tool_rounds": behavior.ChatToolRounds,
+		"chat_tool_calls":  behavior.ChatToolCalls,
 		"behavior_version": gorm.Expr("behavior_version+1"),
 	})
 	if result.Error != nil || result.RowsAffected != 1 {

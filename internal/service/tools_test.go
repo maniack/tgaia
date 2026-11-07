@@ -56,11 +56,11 @@ func TestToolCheckpointsSurviveRetry(t *testing.T) {
 		job := take(t, e, "respond")
 		ctx := context.Background()
 		request := []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}
-		if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request); err != nil {
+		if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 		plans := f.plans
-		if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request); err != nil {
+		if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 		if f.calls != 1 || f.plans != plans {
@@ -83,7 +83,7 @@ func TestStartedToolNeverRepeated(t *testing.T) {
 	if _, err := e.DB.Agent().StartTool(ctx, *job, "call:0:0", `{"id":"c1","type":"function","function":{"name":"lookup","arguments":"{}"}}`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}); err != nil {
+	if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if f.calls != 0 {
@@ -175,7 +175,7 @@ func TestReActThinkingToolLoop(t *testing.T) {
 	ctx := context.Background()
 	respondPrompt, _ := prompts.ReadFile("prompts/respond.txt")
 	request := []llm.Message{{Role: "system", Content: string(respondPrompt) + "\nBot administrator instructions:\nBe helpful"}, {Role: "user", Content: "find info about golang"}}
-	outcome, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request)
+	outcome, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
