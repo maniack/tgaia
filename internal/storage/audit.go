@@ -57,8 +57,11 @@ func (d *Database) AuditState(ctx context.Context, path string, body map[string]
 	case "/api/prompt":
 		query = "SELECT agent_id,bot_id,system_prompt FROM telegram_bots WHERE agent_id=? AND bot_id=?"
 		args = []any{body["agent_id"], body["bot_id"]}
+	case "/api/bot-tool-limits":
+		query = "SELECT agent_id,bot_id,tool_rounds,tool_calls FROM telegram_bots WHERE agent_id=? AND bot_id=?"
+		args = []any{body["agent_id"], body["bot_id"]}
 	case "/api/chat-behavior":
-		query = "SELECT agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,behavior_version FROM chat_directory WHERE agent_id=? AND bot_id=? AND chat_id=?"
+		query = "SELECT agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,chat_tool_rounds,chat_tool_calls,allow_skip,behavior_version FROM chat_directory WHERE agent_id=? AND bot_id=? AND chat_id=?"
 		args = []any{body["agent_id"], body["bot_id"], body["chat_id"]}
 	case "/api/knowledge":
 		query = "SELECT * FROM shared_knowledge WHERE agent_id=?"

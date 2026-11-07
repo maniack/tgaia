@@ -15,7 +15,7 @@ import (
 func TestPoCStorage(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, peer := databasesAtVersion(t, driver, 27)
+			db, peer := databasesAtVersion(t, driver, 28)
 			ctx := context.Background()
 			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			if err := db.Agent().Ready(ctx); err != nil {

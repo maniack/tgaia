@@ -95,3 +95,11 @@ func TestNoToolPhaseForbidsVerificationClaims(t *testing.T) {
 		t.Fatal("no-tools rule added although a tool phase ran")
 	}
 }
+
+func TestTighterCap(t *testing.T) {
+	for _, c := range [][3]int{{0, 0, 0}, {0, 4, 4}, {6, 0, 6}, {6, 4, 4}, {3, 4, 3}} {
+		if got := tighter(c[0], c[1]); got != c[2] {
+			t.Fatalf("tighter(%d,%d)=%d want %d", c[0], c[1], got, c[2])
+		}
+	}
+}

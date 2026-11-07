@@ -1,0 +1,2 @@
+ALTER TABLE telegram_bots ADD COLUMN tool_rounds INT NOT NULL DEFAULT 0;
+ALTER TABLE telegram_bots ADD COLUMN tool_calls INT NOT NULL DEFAULT 0;

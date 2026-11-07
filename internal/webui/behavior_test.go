@@ -35,3 +35,22 @@ func TestConversationBehaviorAPIIsScopedByBotAndChat(t *testing.T) {
 		}
 	}
 }
+
+func TestBotToolLimitsRoundTrip(t *testing.T) {
+	server, _ := skillsServer(t)
+	w := httptest.NewRecorder()
+	server.putBotToolLimits(w, httptest.NewRequest("POST", "/api/bot-tool-limits", strings.NewReader(`{"agent_id":"test","bot_id":1,"tool_rounds":3,"tool_calls":5}`)))
+	if w.Code != 200 {
+		t.Fatalf("put: %d %s", w.Code, w.Body)
+	}
+	w = httptest.NewRecorder()
+	server.prompt(w, httptest.NewRequest("GET", "/api/prompt?agent_id=test&bot_id=1", nil))
+	if !strings.Contains(w.Body.String(), `"tool_rounds":3`) || !strings.Contains(w.Body.String(), `"tool_calls":5`) {
+		t.Fatalf("get: %s", w.Body)
+	}
+	w = httptest.NewRecorder()
+	server.putBotToolLimits(w, httptest.NewRequest("POST", "/api/bot-tool-limits", strings.NewReader(`{"agent_id":"test","bot_id":1,"tool_rounds":99,"tool_calls":5}`)))
+	if w.Code == 200 {
+		t.Fatal("out-of-range limit accepted")
+	}
+}

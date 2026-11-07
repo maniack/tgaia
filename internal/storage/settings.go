@@ -103,6 +103,26 @@ func (b *BotRegistry) Prompt(ctx context.Context, agentID string, botID int64) (
 	}
 	return row.SystemPrompt, nil
 }
+
+// ToolLimits returns the bot's caps on tool rounds and calls per reply;
+// zero means the bot does not tighten the global limit.
+func (b *BotRegistry) ToolLimits(ctx context.Context, agentID string, botID int64) (rounds, calls int, err error) {
+	var row struct{ ToolRounds, ToolCalls int }
+	if err := b.db.WithContext(ctx).Table("telegram_bots").Select("tool_rounds,tool_calls").Where("agent_id=? AND bot_id=?", agentID, botID).Take(&row).Error; err != nil {
+		return 0, 0, errors.New("bot tool limits unavailable")
+	}
+	return row.ToolRounds, row.ToolCalls, nil
+}
+func (b *BotRegistry) SetToolLimits(ctx context.Context, agentID string, botID int64, rounds, calls int) error {
+	if !validAgent(agentID) || botID <= 0 || rounds < 0 || rounds > 32 || calls < 0 || calls > 64 {
+		return errors.New("invalid bot tool limits")
+	}
+	r := b.db.WithContext(ctx).Table("telegram_bots").Where("agent_id=? AND bot_id=?", agentID, botID).Updates(map[string]any{"tool_rounds": rounds, "tool_calls": calls})
+	if r.Error != nil || r.RowsAffected != 1 {
+		return errors.New("updating bot tool limits failed")
+	}
+	return nil
+}
 func (b *BotRegistry) SetPrompt(ctx context.Context, agentID string, botID int64, prompt string, maxBytes int) error {
 	if !validAgent(agentID) || botID <= 0 || len(prompt) > maxBytes {
 		return errors.New("invalid bot prompt")

@@ -107,6 +107,14 @@ func decodeResponse(text string, allowSkip bool) (Response, error) {
 	return r, nil
 }
 
+// tighter combines two optional caps where zero means "not set".
+func tighter(a, b int) int {
+	if a == 0 || (b > 0 && b < a) {
+		return b
+	}
+	return a
+}
+
 // replyLimit bounds a stored reply. Long answers are delivered as documents, so
 // the limit is a safety ceiling rather than a Telegram message size.
 const replyLimit = 64000
@@ -372,7 +380,11 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		if rewrite {
 			request[0].Content += "\nThe user edited the source message. Revise your previous answer; it will replace the existing bot reply. Tools are unavailable in this revision: do not repeat or undo earlier actions, and do not claim anything was scheduled, remembered or undone now."
 		} else {
-			tools, err = e.toolContext(ctx, job, payload, requestedAt, request, behavior.ChatToolRounds, behavior.ChatToolCalls)
+			botRounds, botCalls, err := e.DB.Bots().ToolLimits(ctx, job.Scope.AgentID, job.Scope.BotID)
+			if err != nil {
+				return err
+			}
+			tools, err = e.toolContext(ctx, job, payload, requestedAt, request, tighter(behavior.ChatToolRounds, botRounds), tighter(behavior.ChatToolCalls, botCalls))
 			if err != nil {
 				return err
 			}

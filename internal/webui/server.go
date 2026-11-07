@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 		r.Delete("/api/settings", s.mutation((*Server).deleteSetting))
 		r.Get("/api/prompt", s.prompt)
 		r.Post("/api/prompt", s.mutation((*Server).putPrompt))
+		r.Post("/api/bot-tool-limits", s.mutation((*Server).putBotToolLimits))
 		r.Get("/api/chat-behavior", s.chatBehavior)
 		r.Post("/api/chat-behavior", s.mutation((*Server).putChatBehavior))
 		r.Get("/api/knowledge", s.knowledge)
@@ -498,7 +499,24 @@ func (s *Server) prompt(w http.ResponseWriter, r *http.Request) {
 		result(w, err)
 		return
 	}
-	send(w, map[string]string{"prompt": value})
+	rounds, calls, err := s.DB.Bots().ToolLimits(r.Context(), sc.AgentID, sc.BotID)
+	if err != nil {
+		result(w, err)
+		return
+	}
+	send(w, map[string]any{"prompt": value, "tool_rounds": rounds, "tool_calls": calls})
+}
+func (s *Server) putBotToolLimits(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID    string `json:"agent_id"`
+		BotID      int64  `json:"bot_id"`
+		ToolRounds int    `json:"tool_rounds"`
+		ToolCalls  int    `json:"tool_calls"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Bots().SetToolLimits(r.Context(), in.AgentID, in.BotID, in.ToolRounds, in.ToolCalls))
 }
 func (s *Server) putPrompt(w http.ResponseWriter, r *http.Request) {
 	var in struct {

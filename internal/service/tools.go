@@ -48,7 +48,8 @@ type toolOutcome struct {
 // user-facing answer here; that happens once, in the final closed-schema call.
 // requestedAt anchors relative delays ("in 5 minutes") to the moment the user
 // asked, not to when the worker got around to it.
-// chatToolRounds and chatToolCalls are per-chat overrides; zero means use the global limit.
+// chatToolRounds and chatToolCalls are the tighter of the chat and bot caps;
+// zero means use the global limit. They can only lower it.
 func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.JobPayload, requestedAt time.Time, request []llm.Message, chatToolRounds, chatToolCalls int) (toolOutcome, error) {
 	outcome := toolOutcome{Messages: request}
 	if job.SenderChatID != 0 {
