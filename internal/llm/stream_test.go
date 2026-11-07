@@ -174,3 +174,18 @@ func TestCallerCancellationIsNotClassifiedAsModelTimeout(t *testing.T) {
 		t.Fatalf("caller deadline must surface as context error, got %v", err)
 	}
 }
+
+// A 4xx carries the status and provider error identifiers as a safe detail;
+// the free-text message never leaves the client.
+func TestRejectionDetailOmitsMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		_, _ = w.Write([]byte(`{"error":{"message":"prompt secret too long","type":"invalid_request_error","code":"context_length_exceeded"}}`))
+	}))
+	defer server.Close()
+	client, _ := New(server.URL, "m", config.NewSecret(""))
+	_, err := client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+	if got := queue.Detail(err); got != "400 invalid_request_error/context_length_exceeded" || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("detail = %q err = %v", got, err)
+	}
+}

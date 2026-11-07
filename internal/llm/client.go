@@ -6,10 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -228,7 +231,7 @@ func (c *Client) chat(ctx context.Context, messages []Message, schema json.RawMe
 	case response.StatusCode >= 500:
 		return Message{}, transient(ClassUpstream, "LLM upstream failure")
 	default:
-		return Message{}, terminal(ClassRejected, "LLM rejected the request")
+		return Message{}, queue.WithDetail(terminal(ClassRejected, "LLM rejected the request"), rejection(response))
 	}
 	reader := bufio.NewReaderSize(io.LimitReader(response.Body, maxStreamBytes+1), 64<<10)
 	first, err := peekNonSpace(reader)
@@ -250,6 +253,35 @@ func (c *Client) chat(ctx context.Context, messages []Message, schema json.RawMe
 		return Message{}, err
 	}
 	return c.validate(result, tools)
+}
+
+// errorToken bounds what a rejection may contribute to logs: identifiers
+// only, never free text that might echo the prompt.
+var errorToken = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,64}$`)
+
+// rejection extracts the HTTP status and the OpenAI-style error type and code
+// from a 4xx body, e.g. "400 invalid_request_error/context_length_exceeded".
+// The message field is deliberately ignored.
+func rejection(response *http.Response) string {
+	data, _ := io.ReadAll(io.LimitReader(response.Body, 8<<10))
+	var body struct {
+		Error struct {
+			Code any    `json:"code"`
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(data, &body)
+	parts := []string{}
+	for _, v := range []string{body.Error.Type, fmt.Sprint(body.Error.Code)} {
+		if v != "<nil>" && errorToken.MatchString(v) {
+			parts = append(parts, v)
+		}
+	}
+	detail := strconv.Itoa(response.StatusCode)
+	if len(parts) > 0 {
+		detail += " " + strings.Join(parts, "/")
+	}
+	return detail
 }
 
 type assembled struct {

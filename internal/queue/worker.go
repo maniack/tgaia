@@ -152,7 +152,7 @@ func (w *Worker) execute(parent context.Context, job Job) {
 	// The bounded class and phase are safe and sufficient for diagnosis.
 	class, terminal := Classify(err)
 	dead := terminal || job.Exhausted()
-	w.log.WarnContext(parent, "queue handler failed", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "class", class, "phase", Phase(err), "terminal", terminal, "dead", dead)
+	w.log.WarnContext(parent, "queue handler failed", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "class", class, "phase", Phase(err), "detail", Detail(err), "terminal", terminal, "dead", dead)
 	if terminal {
 		err = w.store.Fail(settleCtx, job.Receipt, class)
 	} else {

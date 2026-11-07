@@ -13,7 +13,10 @@ type Failure struct {
 	Class    string
 	Terminal bool // A deterministic failure: retrying the same input cannot succeed.
 	Phase    string
-	Err      error
+	// Detail is a short, code-built diagnostic (status codes, provider error
+	// identifiers) that is safe to log. Never put model or user text here.
+	Detail string
+	Err    error
 }
 
 func (f *Failure) Error() string {
@@ -80,6 +83,26 @@ func Classify(err error) (class string, terminal bool) {
 }
 
 // Phase returns the annotated phase, or an empty string.
+// WithDetail attaches a safe diagnostic to a failure; see Failure.Detail.
+func WithDetail(err error, detail string) error {
+	var f *Failure
+	if errors.As(err, &f) && detailPattern.MatchString(detail) {
+		f.Detail = detail
+	}
+	return err
+}
+
+var detailPattern = regexp.MustCompile(`^[A-Za-z0-9_.:/ -]{1,160}$`)
+
+// Detail returns the safe diagnostic attached to err, if any.
+func Detail(err error) string {
+	var f *Failure
+	if errors.As(err, &f) {
+		return f.Detail
+	}
+	return ""
+}
+
 func Phase(err error) string {
 	var f *Failure
 	if errors.As(err, &f) {
