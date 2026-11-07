@@ -491,3 +491,9 @@ func ToolChoice(ctx context.Context) string {
 	choice, _ := ctx.Value(toolChoiceKey{}).(string)
 	return choice
 }
+
+// Thinking reports the explicit reasoning override carried by ctx.
+func Thinking(ctx context.Context) (enabled, set bool) {
+	enabled, set = ctx.Value(thinkingKey{}).(bool)
+	return enabled, set
+}

@@ -136,3 +136,22 @@ func TestOversizedResultIsTruncatedNotDropped(t *testing.T) {
 		t.Fatal("cut inside a UTF-8 sequence")
 	}
 }
+
+func TestToolNameReadableWithHashOnlyWhenNeeded(t *testing.T) {
+	none := func(string) bool { return false }
+	if got := toolName("k8s", "list_in_namespace", none); got != "k8s__list_in_namespace" {
+		t.Fatalf("plain name = %q", got)
+	}
+	if got := toolName("web", "fetch.url/v2", none); got != "web__fetch_url_v2" {
+		t.Fatalf("sanitized name = %q", got)
+	}
+	taken := func(n string) bool { return n == "web__fetch_url" }
+	a, b := toolName("web", "fetch.url", taken), toolName("web", "fetch/url", taken)
+	if a == "web__fetch_url" || a == b || !strings.HasPrefix(a, "web__fetch_url_") {
+		t.Fatalf("collision names = %q %q", a, b)
+	}
+	long := toolName("server", strings.Repeat("x", 100), none)
+	if len(long) != maxToolName || long != toolName("server", strings.Repeat("x", 100), none) {
+		t.Fatalf("long name = %q (%d)", long, len(long))
+	}
+}

@@ -110,6 +110,10 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 	uncertain := false
 	finished := false
 	last := "" // Previous call signature; models sometimes loop on one call.
+	// idle counts consecutive rounds in which nothing executed: every call was
+	// denied, schema-invalid or a blocked repeat. A model that keeps calling
+	// tools that do not exist is looping, not working.
+	idle := 0
 	for round := 0; round < maxRounds && !finished; round++ {
 		if err := e.DB.Agent().CheckActions(toolCtx, job.Scope, job.ActorUserID); err != nil {
 			return outcome, err
@@ -129,6 +133,19 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 			// output budget keeps a wandering draft from costing minutes.
 			turnCtx := llm.WithToolChoice(llm.WithOutputBudget(toolCtx, e.Config.Limit("tool_output_tokens")), "required")
 			message, err = model.CompleteTools(turnCtx, input, specs)
+			if truncated(err) {
+				// A turn needs only a call. When reasoning eats the output budget,
+				// retry once without thinking; if that is cut off too, close the
+				// phase and answer from what was already gathered instead of
+				// discarding the job's work.
+				if err = e.reserveModel(toolCtx, job, false); err != nil {
+					return outcome, queue.WithPhase(err, phase)
+				}
+				message, err = model.CompleteTools(llm.WithThinking(turnCtx, false), input, specs)
+				if truncated(err) {
+					message, err = llm.Message{Role: "assistant"}, nil
+				}
+			}
 			if err != nil {
 				return outcome, queue.WithPhase(err, phase)
 			}
@@ -155,6 +172,7 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 		}
 		message.Content = clipNote(message.Content)
 		input = append(input, message)
+		executed := false
 		for i, call := range message.ToolCalls {
 			calls++
 			if err := e.DB.Agent().CheckActions(toolCtx, job.Scope, job.ActorUserID); err != nil {
@@ -182,6 +200,7 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 				return outcome, errors.New("tool intent mismatch")
 			}
 			if previous.State == "completed" || previous.State == "uncertain" {
+				executed = true
 				output = previous.Result
 				uncertain = uncertain || previous.State == "uncertain"
 			} else if previous.State == "started" && (!local || builtin.mutates(name)) {
@@ -197,6 +216,7 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 			} else if uncertain {
 				output = `{"is_error":true,"content":"Further actions stopped after an unknown tool outcome."}`
 			} else {
+				executed = true
 				if previous.State != "started" {
 					fresh, err := e.DB.Agent().StartTool(toolCtx, job, key, string(encoded))
 					if err != nil {
@@ -249,6 +269,11 @@ func (e *Engine) toolContext(ctx context.Context, job queue.Job, payload agent.J
 			}
 			input = append(input, llm.Message{Role: "tool", ToolCallID: call.ID, Content: output})
 		}
+		if executed || finished {
+			idle = 0
+		} else if idle++; idle >= 2 {
+			break
+		}
 		if calls >= maxCalls || uncertain {
 			break
 		}
@@ -288,6 +313,11 @@ func finishNote(args string) string {
 	}
 	_ = json.Unmarshal([]byte(args), &in)
 	return clipNote(in.Note)
+}
+
+func truncated(err error) bool {
+	class, _ := queue.Classify(err)
+	return class == llm.ClassTruncated
 }
 
 func failedResult(output string) bool {

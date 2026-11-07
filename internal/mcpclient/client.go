@@ -144,8 +144,7 @@ func (p *Provider) Open(ctx context.Context, scope chat.Scope) (Session, error) 
 				s.Close()
 				return nil, errors.New("unsupported MCP input schema")
 			}
-			hash := sha256.Sum256([]byte(server.Name + "\x00" + tool.Name))
-			name := fmt.Sprintf("mcp_%x", hash[:16])
+			name := toolName(server.Name, tool.Name, func(n string) bool { _, taken := s.entries[n]; return taken })
 			s.entries[name] = entry{session: cs, name: tool.Name, schema: resolved, permit: func() bool { return p.Permit == nil || p.Permit(scope, server.Name, tool.Name) }}
 			s.tools = append(s.tools, llm.Tool{Type: "function", Function: llm.ToolFunction{Name: name, Description: server.Name + " / " + tool.Name + ": " + tool.Description, Parameters: schema}})
 			if len(s.tools) > 64 {
@@ -159,6 +158,36 @@ func (p *Provider) Open(ctx context.Context, scope chat.Scope) (Session, error) 
 	sort.Slice(s.tools, func(i, j int) bool { return s.tools[i].Function.Name < s.tools[j].Function.Name })
 	return s, nil
 }
+
+// maxToolName is the function-name limit shared by OpenAI-compatible APIs.
+const maxToolName = 64
+
+// toolName exposes an MCP tool to the model as "<server>__<tool>": the server
+// name is chosen by the administrator, so the model sees readable names it can
+// copy exactly. Opaque hashes invited the model to invent names. A short hash
+// is appended only when sanitizing or truncation would collide or overflow.
+// Built-in tool names never contain "__", so they cannot clash.
+func toolName(server, tool string, taken func(string) bool) string {
+	var b strings.Builder
+	for _, r := range tool {
+		if r < utf8.RuneSelf && (r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	name := server + "__" + b.String()
+	if len(name) <= maxToolName && !taken(name) {
+		return name
+	}
+	hash := sha256.Sum256([]byte(server + "\x00" + tool))
+	suffix := fmt.Sprintf("_%x", hash[:4])
+	if len(name) > maxToolName-len(suffix) {
+		name = name[:maxToolName-len(suffix)]
+	}
+	return name + suffix
+}
+
 func (s *session) Validate(name, args string) error {
 	e, ok := s.entries[name]
 	if !ok || (e.permit != nil && !e.permit()) {
