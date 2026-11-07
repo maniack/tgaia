@@ -97,6 +97,7 @@ func (r *runtime) setPublishedStatus(next *snapshot) {
 	r.status = applyStatus{State: "applied", AppliedAt: time.Now().UTC(), BotProfiles: profiles}
 	r.statusMu.Unlock()
 }
+
 // describeBotAvatar asks the bot itself, with its own prompt, to describe its
 // avatar; the description later shapes how it presents itself.
 func describeBotAvatar(ctx context.Context, model service.Model, system string, identity service.BotIdentity, data []byte, mime string) (string, error) {

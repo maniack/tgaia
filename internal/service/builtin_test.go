@@ -30,6 +30,7 @@ type scriptedModel struct {
 func call(id, name, args string) llm.Message {
 	return llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: id, Type: "function", Function: llm.ToolFunction{Name: name, Arguments: args}}}}
 }
+
 // finishMarker in a scripted turn means "now answer": the model calls the
 // terminal tool built from scriptedModel.reply.
 const finishMarker = "\x00finish"

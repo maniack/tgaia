@@ -46,6 +46,7 @@ func (f *toolFixture) CompleteTools(_ context.Context, in []llm.Message, _ []llm
 	}
 	return llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "c1", Type: "function", Function: llm.ToolFunction{Name: "lookup", Arguments: `{}`}}}}, nil
 }
+
 // runTools runs one response loop with the engine's tools, as Respond does.
 func runTools(ctx context.Context, e *Engine, job queue.Job, request []llm.Message) (turnResult, error) {
 	t := turn{job: job, messages: request, terminal: []llm.Tool{replyTool}, checkpoint: true}
