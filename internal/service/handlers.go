@@ -257,6 +257,18 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		if err != nil {
 			return err
 		}
+		// If the prior reply links exist but the original respond job never
+		// succeeded (only failure_notice was sent), treat the edit as a fresh
+		// request with tools so the user gets a real answer.
+		if len(prior) > 0 {
+			ok, checkErr := store.RespondSucceeded(ctx, job.Scope, payload.MessageID)
+			if checkErr != nil {
+				return checkErr
+			}
+			if !ok {
+				prior = nil
+			}
+		}
 	}
 	rewrite := len(prior) > 0
 	behavior, err := store.ChatBehavior(ctx, job.Scope)

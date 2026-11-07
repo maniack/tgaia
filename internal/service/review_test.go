@@ -244,3 +244,71 @@ func TestEditWithoutTextChangeIsIgnored(t *testing.T) {
 		t.Fatal("unchanged edit reached the model or the chat")
 	}
 }
+
+// TestEditAfterSuccessIsRewrite checks that editing a message whose original
+// respond job completed successfully triggers a rewrite (tools disabled).
+func TestEditAfterSuccessIsRewrite(t *testing.T) {
+	e, model, _, scope := engineFixture(t)
+	ctx := context.Background()
+	accept(t, e, scope, 1, "hello", true)
+	job := take(t, e, "respond")
+	if err := e.Respond(ctx, *job); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DB.Agent().Accept(ctx, agent.Incoming{Scope: scope, MessageID: 1, UpdateID: 2, UserID: 7, Text: "hello revised", Edited: true, Respond: true, SentAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	editJob := take(t, e, "respond")
+	model.calls = 0
+	model.input = nil
+	if err := e.Respond(ctx, *editJob); err != nil {
+		t.Fatal(err)
+	}
+	if model.calls == 0 {
+		t.Fatal("edit after success did not reach the model")
+	}
+	if !strings.Contains(model.input[0].Content, "user edited the source message") {
+		t.Fatal("edit after success did not use rewrite mode")
+	}
+}
+
+// TestEditAfterDeadJobUsesTools checks that editing a message whose original
+// respond job died (failure_notice sent) uses a fresh request with tools.
+func TestEditAfterDeadJobUsesTools(t *testing.T) {
+	e, model, _, scope := engineFixture(t)
+	ctx := context.Background()
+	accept(t, e, scope, 1, "complex request", true)
+	job := take(t, e, "respond")
+	// Simulate the respond job dying terminally.
+	if err := e.DB.Queue().Fail(ctx, job.Receipt, "llm_timeout"); err != nil {
+		t.Fatal(err)
+	}
+	e.Failed(ctx, *job, "llm_timeout")
+	// Deliver the failure notice so reply_links gets a row for message_id=1.
+	notice := take(t, e, "failure_notice")
+	if err := e.FailureNotice(ctx, *notice); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DB.Queue().Complete(ctx, notice.Receipt); err != nil {
+		t.Fatal(err)
+	}
+	// User edits the original message after seeing the failure notice.
+	if err := e.DB.Agent().Accept(ctx, agent.Incoming{Scope: scope, MessageID: 1, UpdateID: 2, UserID: 7, Text: "complex request v2", Edited: true, Respond: true, SentAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	editJob := take(t, e, "respond")
+	model.calls = 0
+	model.input = nil
+	if err := e.Respond(ctx, *editJob); err != nil {
+		t.Fatal(err)
+	}
+	if model.calls == 0 {
+		t.Fatal("edit after dead job did not reach the model")
+	}
+	if strings.Contains(model.input[0].Content, "user edited the source message") {
+		t.Fatal("edit after dead job incorrectly used rewrite mode instead of a fresh request with tools")
+	}
+}
