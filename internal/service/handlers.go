@@ -58,6 +58,7 @@ type Engine struct {
 // call can only write text.
 type Response struct {
 	Reply string `json:"reply"`
+	Skip  bool   `json:"skip,omitempty"`
 }
 
 // storedResult is the durable per-job outcome: the reply plus the scheduler's
@@ -65,6 +66,7 @@ type Response struct {
 // is code-generated, so the user always sees the time that was stored.
 type storedResult struct {
 	Reply         string   `json:"reply"`
+	Skip          bool     `json:"skip,omitempty"`
 	Confirmations []string `json:"confirmations,omitempty"`
 }
 
@@ -84,6 +86,10 @@ func decodeResponse(text string) (Response, error) {
 	}
 	if err := dec.Decode(new(any)); err != io.EOF {
 		return r, errors.New("model returned trailing data")
+	}
+	if r.Skip {
+		// A skipped response has no reply; that is the point.
+		return r, nil
 	}
 	if r.Reply == "" || len(r.Reply) > replyLimit {
 		return r, errors.New("model reply size invalid")
@@ -326,7 +332,10 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		}
 		system := string(prompt) + "\nBot administrator instructions:\n" + botPrompt + e.runtimeContext(job.Scope.BotID)
 		schemaPath := "prompts/response.schema.json"
-		var tools toolOutcome
+			if behavior.AllowSkip {
+				schemaPath = "prompts/response_skip.schema.json"
+			}
+			var tools toolOutcome
 		if reader {
 			system += "\nThis sender has reader-only access (or a hidden identity). Reply only: tools, scheduled tasks and memory are disabled for them. Never promise to create a task or remember anything."
 		}
@@ -365,7 +374,7 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		if err != nil {
 			return queue.WithPhase(err, "final")
 		}
-		data, _ := json.Marshal(storedResult{Reply: response.Reply, Confirmations: tools.Confirmations})
+		data, _ := json.Marshal(storedResult{Reply: response.Reply, Skip: response.Skip, Confirmations: tools.Confirmations})
 		stored = string(data)
 		stopTyping()
 		if err := store.SaveResult(ctx, job, stored); err != nil {
@@ -373,8 +382,11 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		}
 	}
 	var result storedResult
-	if err := json.Unmarshal([]byte(stored), &result); err != nil || result.Reply == "" {
+	if err := json.Unmarshal([]byte(stored), &result); err != nil || (!result.Skip && result.Reply == "") {
 		return errors.New("invalid stored result")
+	}
+	if result.Skip {
+		return nil
 	}
 	text := result.text()
 	_, documents := sender.(DocumentSender)

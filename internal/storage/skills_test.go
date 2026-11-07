@@ -8,7 +8,7 @@ import (
 )
 
 func TestSkillVersionsAndActivation(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 26)
+	db, _ := databasesAtVersion(t, config.SQLite, 27)
 	ctx := context.Background()
 	first, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "daily_brief", "Build a concise brief", `def run(input_json): return input_json`)
 	if err != nil || first.Version != 1 || first.Status != "draft" {

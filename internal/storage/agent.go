@@ -55,7 +55,7 @@ func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=26").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=27").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -235,7 +235,7 @@ func (a *AgentStore) ChatBehavior(ctx context.Context, scope chat.Scope) (agent.
 	if !scope.Valid() {
 		return behavior, errors.New("invalid conversation scope")
 	}
-	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Select("agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,chat_tool_rounds,chat_tool_calls,behavior_version AS version").Take(&behavior).Error
+	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Select("agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,chat_tool_rounds,chat_tool_calls,allow_skip,behavior_version AS version").Take(&behavior).Error
 	if err != nil {
 		return behavior, errors.New("conversation behavior unavailable")
 	}
@@ -256,6 +256,7 @@ func (a *AgentStore) SetChatBehavior(ctx context.Context, behavior agent.ChatBeh
 		"loop_protection":  behavior.LoopProtection,
 		"chat_tool_rounds": behavior.ChatToolRounds,
 		"chat_tool_calls":  behavior.ChatToolCalls,
+		"allow_skip":       behavior.AllowSkip,
 		"behavior_version": gorm.Expr("behavior_version+1"),
 	})
 	if result.Error != nil || result.RowsAffected != 1 {

@@ -1,0 +1,1 @@
+{"type":"object","additionalProperties":false,"properties":{"reply":{"type":"string"},"skip":{"type":"boolean"}},"required":["reply","skip"]}

@@ -1,0 +1,1 @@
+ALTER TABLE chat_directory ADD COLUMN allow_skip BOOLEAN NOT NULL DEFAULT FALSE;

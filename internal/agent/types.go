@@ -165,9 +165,12 @@ type ChatBehavior struct {
 	LoopProtection bool   `json:"loop_protection"`
 	// ChatToolRounds and ChatToolCalls override the global tool_rounds and
 	// tool_calls limits for this chat. Zero means "use the global default".
-	ChatToolRounds int   `json:"chat_tool_rounds"`
-	ChatToolCalls  int   `json:"chat_tool_calls"`
-	Version        int64 `json:"version"`
+	ChatToolRounds int  `json:"chat_tool_rounds"`
+	ChatToolCalls  int  `json:"chat_tool_calls"`
+	// AllowSkip lets the model reply with skip:true to suppress sending a
+	// message when there is nothing meaningful to say.
+	AllowSkip bool  `json:"allow_skip"`
+	Version   int64 `json:"version"`
 }
 
 // ReactionUpdate is the current reaction set reported by Telegram for one
