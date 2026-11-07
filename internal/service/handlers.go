@@ -291,7 +291,7 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 			return err
 		}
 		if strings.TrimSpace(botPrompt) == "" {
-			botPrompt, err = readDefaultPrompt(e.DefaultPromptFile)
+			botPrompt, err = readDefaultPrompt(e.DefaultPromptFile, e.Config.Limit("system_prompt_bytes"))
 			if err != nil {
 				return err
 			}

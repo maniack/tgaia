@@ -283,7 +283,7 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			return toolError("Cannot resolve the time: " + err.Error()), nil
 		}
 		task := agent.Task{ID: taskID(b.job.ID, key), AgentID: b.job.Scope.AgentID, BotID: b.job.Scope.BotID, ChatID: b.job.Scope.ChatID, ThreadID: b.job.Scope.ThreadID, UserID: b.job.ActorUserID, Prompt: strings.TrimSpace(in.Prompt), RunAt: runAt.UnixMilli(), IntervalMS: in.Interval * 1000, Active: true}
-		if err := store.PutTask(ctx, task, 0, b.engine.Config.Limit("active_tasks_per_user")); err != nil {
+		if err := store.PutTask(ctx, task, 0, b.engine.Config.Limit("active_tasks_per_user"), b.engine.Config.Limit("system_prompt_bytes")); err != nil {
 			if errors.Is(err, storage.ErrQuota) {
 				return toolError("The user already has the maximum number of active tasks; one must be deleted first."), nil
 			}
@@ -337,7 +337,7 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 		if in.Active != nil {
 			task.Active = *in.Active
 		}
-		if err := store.PutTask(ctx, task, task.Version, b.engine.Config.Limit("active_tasks_per_user")); err != nil {
+		if err := store.PutTask(ctx, task, task.Version, b.engine.Config.Limit("active_tasks_per_user"), b.engine.Config.Limit("system_prompt_bytes")); err != nil {
 			if errors.Is(err, storage.ErrQuota) {
 				return toolError("The user already has the maximum number of active tasks."), nil
 			}

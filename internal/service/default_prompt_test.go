@@ -15,7 +15,7 @@ func TestDefaultPromptFallbackAndFileRefresh(t *testing.T) {
 		if err := os.WriteFile(e.DefaultPromptFile, []byte(prompt), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := e.DB.Bots().SetPrompt(ctx, scope.AgentID, scope.BotID, " \n\t"); err != nil {
+		if err := e.DB.Bots().SetPrompt(ctx, scope.AgentID, scope.BotID, " \n\t", 16000); err != nil {
 			t.Fatal(err)
 		}
 		accept(t, e, scope, int64(i+1), "hello", true)
@@ -31,7 +31,7 @@ func TestDefaultPromptFallbackAndFileRefresh(t *testing.T) {
 		}
 	}
 	// A per-bot override must work even if the fallback file is unavailable.
-	if err := e.DB.Bots().SetPrompt(ctx, scope.AgentID, scope.BotID, "Individual bot prompt"); err != nil {
+	if err := e.DB.Bots().SetPrompt(ctx, scope.AgentID, scope.BotID, "Individual bot prompt", 16000); err != nil {
 		t.Fatal(err)
 	}
 	e.DefaultPromptFile = filepath.Join(t.TempDir(), "missing.md")
@@ -46,14 +46,14 @@ func TestDefaultPromptFallbackAndFileRefresh(t *testing.T) {
 }
 func TestDefaultPromptFileValidation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "system-prompt.md")
-	if _, err := readDefaultPrompt(path); err == nil {
+	if _, err := readDefaultPrompt(path, 16000); err == nil {
 		t.Fatal("missing file accepted")
 	}
 	for _, content := range []string{" \n", strings.Repeat("x", 16001)} {
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := readDefaultPrompt(path); err == nil {
+		if _, err := readDefaultPrompt(path, 16000); err == nil {
 			t.Fatal("invalid prompt accepted")
 		}
 	}

@@ -14,8 +14,8 @@ import (
 	"gorm.io/gorm"
 )
 
-func validTask(task agent.Task) bool {
-	return (chat.Scope{AgentID: task.AgentID, BotID: task.BotID, ChatID: task.ChatID, ThreadID: task.ThreadID}).Valid() && task.UserID > 0 && len(task.ID) > 0 && len(task.ID) < 128 && len(task.Prompt) > 0 && len(task.Prompt) <= 16000 && task.RunAt > 0 && (task.IntervalMS == 0 || task.IntervalMS >= 60000) && task.IntervalMS <= int64((365*24*time.Hour)/time.Millisecond)
+func validTask(task agent.Task, maxPromptBytes int) bool {
+	return (chat.Scope{AgentID: task.AgentID, BotID: task.BotID, ChatID: task.ChatID, ThreadID: task.ThreadID}).Valid() && task.UserID > 0 && len(task.ID) > 0 && len(task.ID) < 128 && len(task.Prompt) > 0 && len(task.Prompt) <= maxPromptBytes && task.RunAt > 0 && (task.IntervalMS == 0 || task.IntervalMS >= 60000) && task.IntervalMS <= int64((365*24*time.Hour)/time.Millisecond)
 }
 func (a *AgentStore) PutTask(ctx context.Context, task agent.Task, expected int64, quotas ...int) error {
 	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -41,11 +41,15 @@ func (a *AgentStore) PutTask(ctx context.Context, task agent.Task, expected int6
 				return ErrQuota
 			}
 		}
-		return (&AgentStore{db: tx}).putTask(ctx, task, expected)
+		maxPromptBytes := 16000
+		if len(quotas) > 1 && quotas[1] > 0 {
+			maxPromptBytes = quotas[1]
+		}
+		return (&AgentStore{db: tx}).putTask(ctx, task, expected, maxPromptBytes)
 	})
 }
-func (a *AgentStore) putTask(ctx context.Context, task agent.Task, expected int64) error {
-	if !validTask(task) {
+func (a *AgentStore) putTask(ctx context.Context, task agent.Task, expected int64, maxPromptBytes int) error {
+	if !validTask(task, maxPromptBytes) {
 		return errors.New("invalid task")
 	}
 	scope := chat.Scope{AgentID: task.AgentID, BotID: task.BotID, ChatID: task.ChatID, ThreadID: task.ThreadID}
@@ -274,8 +278,8 @@ func (a *AgentStore) BlockChat(ctx context.Context, s chat.Scope, blocked bool) 
 		return nil
 	})
 }
-func (a *AgentStore) PutKnowledge(ctx context.Context, agentID, content string, version int64) error {
-	if !validAgent(agentID) || len(content) > 16000 {
+func (a *AgentStore) PutKnowledge(ctx context.Context, agentID, content string, version int64, maxBytes int) error {
+	if !validAgent(agentID) || len(content) > maxBytes {
 		return errors.New("invalid knowledge")
 	}
 	if version == 0 {

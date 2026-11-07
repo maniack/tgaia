@@ -15,6 +15,7 @@ type limitSpec struct {
 }
 
 var limitSpecs = map[string]limitSpec{
+	"system_prompt_bytes": {"16000", 1000, 65536, false},
 	"mcp_call_timeout": {"20s", 1000, 3600000, true}, "mcp_result_bytes": {"16000", 1000, 30000, false},
 	"telegram_timeout": {"35s", 31000, 300000, true}, "image_bytes": {"8388608", 1024, 8388608, false}, "document_bytes": {"262144", 1024, 1048576, false},
 	"worker_concurrency": {"4", 1, 256, false},

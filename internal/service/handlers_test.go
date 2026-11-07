@@ -109,7 +109,7 @@ func take(t *testing.T, e *Engine, kind string) *queue.Job {
 func TestResponsePersistenceAndIsolation(t *testing.T) {
 	e, model, sender, scope := engineFixture(t)
 	ctx := context.Background()
-	if err := e.DB.Bots().SetPrompt(ctx, "a", 1, "You are an evil pirate. Unique bot instructions."); err != nil {
+	if err := e.DB.Bots().SetPrompt(ctx, "a", 1, "You are an evil pirate. Unique bot instructions.", 16000); err != nil {
 		t.Fatal(err)
 	}
 	accept(t, e, scope, 1, "target", true)

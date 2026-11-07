@@ -193,8 +193,8 @@
       </article>
       <form id="knowledge-form" class="memory-layer knowledge-layer">
         <div class="memory-layer-head"><span class="memory-layer-icon"><svg class="icon"><use href="#i-doc"/></svg></span><div><h3>Shared knowledge</h3><p>Administrator-maintained reference for every bot of this agent.</p></div><label>Agent <span class="select"><select id="knowledge-agent"></select></span></label></div>
-        <textarea id="knowledge-text" rows="10" maxlength="16000" aria-label="Shared knowledge" placeholder="Facts, policies and context every bot of this agent should know."></textarea>
-        <div class="editor-status"><span id="knowledge-state">Saved</span><span id="knowledge-count">0 / 16,000</span></div>
+        <textarea id="knowledge-text" rows="10" maxlength="65536" aria-label="Shared knowledge" placeholder="Facts, policies and context every bot of this agent should know."></textarea>
+        <div class="editor-status"><span id="knowledge-state">Saved</span><span id="knowledge-count">0 / 65,536</span></div>
         <div class="sheet-actions"><button id="knowledge-save">Save knowledge</button></div>
       </form>
     </div>
@@ -239,8 +239,8 @@
   <nav class="subnav" aria-label="Settings"><button data-tab="settings">Runtime</button><button data-tab="mcp">Integrations</button></nav>
   <form id="prompt-form" class="bot-instructions">
     <div class="section-head"><div><h2>Bot instructions</h2><p class="section-lead">The system prompt used for this bot's next job.</p></div><div class="controls"><label>Bot <span class="select"><select id="bot-prompt-scope"></select></span></label></div></div>
-    <div class="card"><div class="card-body"><textarea id="bot-prompt" rows="8" maxlength="16000" aria-label="Bot system prompt" placeholder="Describe the bot's role, priorities and boundaries."></textarea></div></div>
-    <div class="editor-status"><span id="bot-prompt-state">Saved</span><span id="bot-prompt-count">0 / 16,000</span></div>
+    <div class="card"><div class="card-body"><textarea id="bot-prompt" rows="8" maxlength="65536" aria-label="Bot system prompt" placeholder="Describe the bot's role, priorities and boundaries."></textarea></div></div>
+    <div class="editor-status"><span id="bot-prompt-state">Saved</span><span id="bot-prompt-count">0 / 65,536</span></div>
     <div class="sheet-actions"><button id="prompt-save">Save instructions</button></div>
   </form>
   <form id="chat-behavior-form" class="bot-instructions">
@@ -279,7 +279,7 @@
       <div class="form-group">
         <label class="row"><span>Conversation</span><span class="select"><select id="task-scope" required></select></span></label>
         <label class="row"><span>Execute as <small>The user identity and permissions used by the task</small></span><span class="select"><select id="task-user" required></select></span></label>
-        <label class="row stack"><span>Prompt</span><textarea id="task-prompt" rows="4" required maxlength="16000" placeholder="What should the bot do when this task runs?"></textarea></label>
+        <label class="row stack"><span>Prompt</span><textarea id="task-prompt" rows="4" required maxlength="65536" placeholder="What should the bot do when this task runs?"></textarea></label>
       </div>
       <div class="form-label">Schedule</div>
       <div class="form-group">

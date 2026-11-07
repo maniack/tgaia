@@ -24,7 +24,7 @@ func TestAuditAtomicity(t *testing.T) {
 		t.Fatal("mutation escaped transaction", err)
 	}
 	err = db.Transaction(ctx, func(tx *Database) error {
-		if err := tx.Agent().PutKnowledge(ctx, "test", "saved", 0); err != nil {
+		if err := tx.Agent().PutKnowledge(ctx, "test", "saved", 0, 16000); err != nil {
 			return err
 		}
 		return tx.Audit(ctx, "admin", "POST /api/knowledge", "{}", 200, "[]", `[{"content":"saved"}]`)

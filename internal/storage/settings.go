@@ -103,8 +103,8 @@ func (b *BotRegistry) Prompt(ctx context.Context, agentID string, botID int64) (
 	}
 	return row.SystemPrompt, nil
 }
-func (b *BotRegistry) SetPrompt(ctx context.Context, agentID string, botID int64, prompt string) error {
-	if !validAgent(agentID) || botID <= 0 || len(prompt) > 16000 {
+func (b *BotRegistry) SetPrompt(ctx context.Context, agentID string, botID int64, prompt string, maxBytes int) error {
+	if !validAgent(agentID) || botID <= 0 || len(prompt) > maxBytes {
 		return errors.New("invalid bot prompt")
 	}
 	r := b.db.WithContext(ctx).Table("telegram_bots").Where("agent_id=? AND bot_id=?", agentID, botID).Update("system_prompt", prompt)

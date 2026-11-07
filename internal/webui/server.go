@@ -374,7 +374,7 @@ func (s *Server) task(w http.ResponseWriter, r *http.Request) {
 	if in.ID == "" {
 		in.ID = uuid.NewString()
 	}
-	result(w, s.DB.Agent().PutTask(r.Context(), in, in.Version, s.Config.Limit("active_tasks_per_user")))
+	result(w, s.DB.Agent().PutTask(r.Context(), in, in.Version, s.Config.Limit("active_tasks_per_user"), s.Config.Limit("system_prompt_bytes")))
 }
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -509,7 +509,7 @@ func (s *Server) putPrompt(w http.ResponseWriter, r *http.Request) {
 	if !read(w, r, &in) {
 		return
 	}
-	result(w, s.DB.Bots().SetPrompt(r.Context(), in.AgentID, in.BotID, in.Prompt))
+	result(w, s.DB.Bots().SetPrompt(r.Context(), in.AgentID, in.BotID, in.Prompt, s.Config.Limit("system_prompt_bytes")))
 }
 func (s *Server) chatBehavior(w http.ResponseWriter, r *http.Request) {
 	behavior, err := s.DB.Agent().ChatBehavior(r.Context(), scope(r))
@@ -543,7 +543,7 @@ func (s *Server) putKnowledge(w http.ResponseWriter, r *http.Request) {
 	if !read(w, r, &in) {
 		return
 	}
-	result(w, s.DB.Agent().PutKnowledge(r.Context(), in.AgentID, in.Content, in.Version))
+	result(w, s.DB.Agent().PutKnowledge(r.Context(), in.AgentID, in.Content, in.Version, s.Config.Limit("system_prompt_bytes")))
 }
 func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "bot"), 10, 64)
