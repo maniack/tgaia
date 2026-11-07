@@ -66,17 +66,14 @@ func TestScheduledExecutionModeAndNoReschedule(t *testing.T) {
 			t.Fatal("scheduled execution offers task or memory mutation tools")
 		}
 	}
-	if !strings.Contains(m.toolInputs[1][len(m.toolInputs[1])-1].Content, "not available during scheduled execution") {
+	if !strings.Contains(m.toolInputs[1][len(m.toolInputs[1])-1].Content, "Tool not offered") {
 		t.Fatal("mutating tool call during scheduled execution was not refused")
 	}
-	if !strings.Contains(m.finalInput[0].Content, "scheduled time has ALREADY ARRIVED") || !strings.Contains(m.finalInput[1].Content, "Scheduled execution is due NOW") || !strings.Contains(m.finalInput[1].Content, "Хорошо, я напомню") {
-		t.Fatal("execution mode/history regression")
+	if !strings.Contains(m.finalInput[1].Content, `"type":"scheduled_task_due"`) || !strings.Contains(m.finalInput[1].Content, `"task":"Напомни мне выпить воды сейчас"`) || !strings.Contains(m.finalInput[1].Content, "Хорошо, я напомню") {
+		t.Fatalf("scheduled event or history missing: %s", m.finalInput[1].Content)
 	}
-	var schema struct {
-		Properties map[string]struct{ Type string }
-	}
-	if json.Unmarshal([]byte(m.schema), &schema) != nil || len(schema.Properties) != 1 || schema.Properties["reply"].Type != "string" {
-		t.Fatalf("final schema must be reply-only: %s", m.schema)
+	if strings.Contains(m.schema, toolSkip) || strings.Contains(m.schema, toolTaskCreate) {
+		t.Fatalf("scheduled run offers skip or task mutation: %s", m.schema)
 	}
 	if err := e.Respond(ctx, *job); err != nil {
 		t.Fatal(err)

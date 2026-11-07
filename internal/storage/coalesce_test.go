@@ -17,7 +17,7 @@ func TestCoalescingAcrossSendersTopicsAndAddressing(t *testing.T) {
 	defer func() { CoalescingDelay = old }()
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 28)
+			db, _ := databasesAtVersion(t, driver, 29)
 			ctx := context.Background()
 			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			msg := func(id, user int64, thread int64, bot, respond bool) {

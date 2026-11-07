@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/maniack/tgaia/internal/chat"
 	"github.com/maniack/tgaia/internal/llm"
 	"github.com/maniack/tgaia/internal/mcpclient"
+	"github.com/maniack/tgaia/internal/queue"
 )
 
 type toolFixture struct {
@@ -42,10 +42,22 @@ func (f *toolFixture) Complete(context.Context, []llm.Message) (string, error) {
 func (f *toolFixture) CompleteTools(_ context.Context, in []llm.Message, _ []llm.Tool) (llm.Message, error) {
 	f.plans++
 	if in[len(in)-1].Role == "tool" {
-		return llm.Message{Role: "assistant", Content: "done"}, nil
+		return call("final", toolReply, `{"text":"answer"}`), nil
 	}
 	return llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "c1", Type: "function", Function: llm.ToolFunction{Name: "lookup", Arguments: `{}`}}}}, nil
 }
+// runTools runs one response loop with the engine's tools, as Respond does.
+func runTools(ctx context.Context, e *Engine, job queue.Job, request []llm.Message) (turnResult, error) {
+	t := turn{job: job, messages: request, terminal: []llm.Tool{replyTool}, checkpoint: true}
+	if err := e.offerActions(ctx, &t, agent.JobPayload{MessageID: 1}, time.Now(), agent.ChatBehavior{}); err != nil {
+		return turnResult{}, err
+	}
+	if t.session != nil {
+		defer t.session.Close()
+	}
+	return e.run(ctx, t)
+}
+
 func TestToolCheckpointsSurviveRetry(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		e, _, _, scope := engineFixture(t)
@@ -56,11 +68,11 @@ func TestToolCheckpointsSurviveRetry(t *testing.T) {
 		job := take(t, e, "respond")
 		ctx := context.Background()
 		request := []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}
-		if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request, 0, 0); err != nil {
+		if _, err := runTools(ctx, e, *job, request); err != nil {
 			t.Fatal(err)
 		}
 		plans := f.plans
-		if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request, 0, 0); err != nil {
+		if _, err := runTools(ctx, e, *job, request); err != nil {
 			t.Fatal(err)
 		}
 		if f.calls != 1 || f.plans != plans {
@@ -83,7 +95,7 @@ func TestStartedToolNeverRepeated(t *testing.T) {
 	if _, err := e.DB.Agent().StartTool(ctx, *job, "call:0:0", `{"id":"c1","type":"function","function":{"name":"lookup","arguments":"{}"}}`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}, 0, 0); err != nil {
+	if _, err := runTools(ctx, e, *job, []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "lookup"}}); err != nil {
 		t.Fatal(err)
 	}
 	if f.calls != 0 {
@@ -156,11 +168,9 @@ func (r *reactFixture) CompleteTools(_ context.Context, in []llm.Message, _ []ll
 		}, nil
 	}
 	if last.Role == "tool" && last.ToolCallID == "c2" {
-		return llm.Message{
-			Role:             "assistant",
-			ReasoningContent: "Thought: full page content acquired, sufficient to answer.",
-			Content:          "I have gathered the full details.",
-		}, nil
+		answer := call("c3", toolReply, `{"text":"Goroutines and channels."}`)
+		answer.ReasoningContent = "Thought: full page content acquired, sufficient to answer."
+		return answer, nil
 	}
 	return llm.Message{Role: "assistant", Content: "done"}, nil
 }
@@ -173,33 +183,21 @@ func TestReActThinkingToolLoop(t *testing.T) {
 	accept(t, e, scope, 1, "find info about golang", true)
 	job := take(t, e, "respond")
 	ctx := context.Background()
-	respondPrompt, _ := prompts.ReadFile("prompts/respond.txt")
-	request := []llm.Message{{Role: "system", Content: string(respondPrompt) + "\nBot administrator instructions:\nBe helpful"}, {Role: "user", Content: "find info about golang"}}
-	outcome, err := e.toolContext(ctx, *job, agent.JobPayload{MessageID: 1}, time.Now(), request, 0, 0)
+	request := []llm.Message{{Role: "system", Content: "Be helpful"}, {Role: "user", Content: "find info about golang"}}
+	outcome, err := runTools(ctx, e, *job, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	output := outcome.Messages
 	if f.turns != 3 {
 		t.Fatalf("expected 3 turns in ReAct loop, got %d", f.turns)
 	}
 	if len(f.calls) != 2 || f.calls[0] != `search:{"query":"golang concurrency"}` || f.calls[1] != `fetch_page:{"url":"https://go.dev/doc"}` {
 		t.Fatalf("expected sequential search and fetch_page calls, got %+v", f.calls)
 	}
-	// Verify tool phase system prompt had tools.txt and did NOT contain respond.txt
-	if strings.Contains(f.seenSystemPrompt, "Output ONLY one JSON object") {
-		t.Fatal("tool phase system prompt should not contain respond.txt JSON envelope requirement")
+	if f.seenSystemPrompt != "Be helpful" {
+		t.Fatalf("the loop must not add instructions to the bot prompt: %q", f.seenSystemPrompt)
 	}
-	if !strings.Contains(f.seenSystemPrompt, "phase_finish") {
-		t.Fatal("tool phase system prompt should explain the structural tool phase")
-	}
-	// Verify final output restores the original respond.txt system prompt
-	if !strings.Contains(output[0].Content, "Output ONLY one JSON object") {
-		t.Fatal("final toolContext output should restore respond.txt in output[0]")
-	}
-	// The transcript (turns, tool results, closing note) feeds the final
-	// closed-schema call; the closing note itself is never the user-facing reply.
-	if len(output) < 6 || output[len(output)-1].Role != "user" || !strings.Contains(output[len(output)-1].Content, "Tool phase is finished") {
-		t.Fatalf("expected the full tool transcript plus the final instruction, got %d messages", len(output))
+	if reply, err := replyOf(outcome); err != nil || reply.Reply != "Goroutines and channels." {
+		t.Fatalf("terminal reply = %+v %v", reply, err)
 	}
 }

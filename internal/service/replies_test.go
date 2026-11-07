@@ -76,8 +76,8 @@ func TestEditedReplyReusesMessages(t *testing.T) {
 	if err != nil || len(links) != 2 || links[1].MessageID != 10003 {
 		t.Fatal("extended links", links, err)
 	}
-	if !strings.Contains(m.input[0].Content, "Tools are unavailable in this revision") {
-		t.Fatal("missing edit execution policy")
+	if !strings.Contains(m.input[1].Content, `"type":"message_edited"`) {
+		t.Fatal("revision is not presented as an edit event")
 	}
 	other := scope
 	other.BotID = 2

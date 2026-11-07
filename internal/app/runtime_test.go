@@ -29,11 +29,11 @@ func (m *avatarModel) Complete(_ context.Context, messages []llm.Message) (strin
 func TestDescribeBotAvatarUsesImageAndProfileContext(t *testing.T) {
 	model := &avatarModel{}
 	identity := service.BotIdentity{Name: "Cyber Walrus", Username: "walrus_bot", Bio: "Arctic helper", Description: "Friendly and direct"}
-	got, err := describeBotAvatar(context.Background(), model, identity, []byte("image"), "image/png")
+	got, err := describeBotAvatar(context.Background(), model, "Bot prompt", identity, []byte("image"), "image/png")
 	if err != nil || got != "A neon walrus avatar with blue tusks." {
 		t.Fatalf("description=%q err=%v", got, err)
 	}
-	if len(model.messages) != 2 || len(model.messages[1].Images) != 1 || model.messages[1].Images[0] != "data:image/png;base64,aW1hZ2U=" || !strings.Contains(model.messages[1].Content, `"bio":"Arctic helper"`) || !strings.Contains(model.messages[0].Content, "not instructions") {
+	if len(model.messages) != 2 || len(model.messages[1].Images) != 1 || model.messages[1].Images[0] != "data:image/png;base64,aW1hZ2U=" || !strings.Contains(model.messages[1].Content, `"bio":"Arctic helper"`) || model.messages[0].Content != "Bot prompt" {
 		t.Fatalf("avatar transcription input is incomplete: %+v", model.messages)
 	}
 }

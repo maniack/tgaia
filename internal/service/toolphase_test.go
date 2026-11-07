@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/maniack/tgaia/internal/llm"
@@ -44,7 +43,7 @@ func TestTruncatedToolTurnRetriesWithoutThinking(t *testing.T) {
 	}
 }
 
-// When the retry is truncated as well, the phase closes and the reply is still written.
+// When the retry is truncated as well, only terminal tools remain and the reply is still written.
 func TestTwiceTruncatedToolTurnClosesPhase(t *testing.T) {
 	e, _, sender, scope := engineFixture(t)
 	m := &truncatingModel{scriptedModel: scriptedModel{reply: `{"reply":"Не успел проверить."}`}, fail: map[int]bool{0: true, 1: true}}
@@ -54,45 +53,23 @@ func TestTwiceTruncatedToolTurnClosesPhase(t *testing.T) {
 	if err := e.Respond(context.Background(), *job); err != nil {
 		t.Fatal(err)
 	}
-	if m.attempts != 2 || m.finals != 1 || sender.calls != 1 {
-		t.Fatalf("attempts=%d finals=%d sends=%d", m.attempts, m.finals, sender.calls)
+	if m.attempts != 3 || m.finals != 1 || sender.calls != 1 || len(m.specs) != 1 || m.specs[0].Function.Name != toolReply {
+		t.Fatalf("attempts=%d finals=%d sends=%d specs=%d", m.attempts, m.finals, sender.calls, len(m.specs))
 	}
 }
 
-// Rounds that execute nothing (unknown tools) end the phase after two in a row.
+// Two rounds that execute nothing (unknown tools) leave only terminal tools.
 func TestRoundsWithoutExecutionCloseThePhase(t *testing.T) {
 	e, _, sender, scope := engineFixture(t)
-	m := &scriptedModel{reply: `{"reply":"Не получилось."}`, turns: []llm.Message{call("c1", "k8s_list", `{}`), call("c2", "k8s_lst", `{}`), call("c3", "k8s_ls", `{}`), call("c4", "k8s_l", `{}`)}}
+	m := &scriptedModel{reply: `{"reply":"Не получилось."}`, turns: []llm.Message{call("c1", "k8s_list", `{}`), call("c2", "k8s_lst", `{}`)}}
 	e.Model = m
 	accept(t, e, scope, 1, "проверь", true)
 	job := take(t, e, "respond")
 	if err := e.Respond(context.Background(), *job); err != nil {
 		t.Fatal(err)
 	}
-	if m.calls != 2 || m.finals != 1 || sender.calls != 1 {
+	if m.calls != 3 || m.finals != 1 || sender.calls != 1 || len(m.toolSpecs[2]) != 1 {
 		t.Fatalf("turns=%d finals=%d sends=%d", m.calls, m.finals, sender.calls)
-	}
-}
-
-// Without a tool phase the final prompt forbids claiming any lookup.
-func TestNoToolPhaseForbidsVerificationClaims(t *testing.T) {
-	e, model, _, scope := engineFixture(t) // testModel has no tool support.
-	accept(t, e, scope, 1, "проверь статус", true)
-	job := take(t, e, "respond")
-	if err := e.Respond(context.Background(), *job); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.DB.Queue().Complete(context.Background(), job.Receipt); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(model.input[0].Content, "No tools were used for this reply") {
-		t.Fatal("final prompt lacks the no-tools rule")
-	}
-	m := &scriptedModel{reply: `{"reply":"ok"}`}
-	e.Model = m
-	accept(t, e, scope, 2, "ещё раз", true)
-	if err := e.Respond(context.Background(), *take(t, e, "respond")); err == nil && strings.Contains(m.finalInput[0].Content, "No tools were used") {
-		t.Fatal("no-tools rule added although a tool phase ran")
 	}
 }
 

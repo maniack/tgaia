@@ -46,9 +46,6 @@ func TestReplyTargetIsVisibleToTheModel(t *testing.T) {
 	if !strings.Contains(in, "message_id=5 from=id=7 sender_chat=0 reply_to=1] и где?") || strings.Count(in, "quoted message") != 0 {
 		t.Fatalf("in-window reply should carry only the reference:\n%s", in)
 	}
-	if !strings.Contains(model.input[0].Content, "reply_to=<id>") {
-		t.Fatal("protocol does not explain reply_to")
-	}
 }
 
 // The system prompt carries a code-built self-description so the model does
@@ -63,7 +60,7 @@ func TestSelfDescriptionComesFromConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	system := model.input[0].Content
-	for _, want := range []string{"Trusted self-description", `"model":"gemma-4-26B"`, "webtools", "no OAuth", "task_create", `"weekday":`, `"bio":"A concise walrus bio"`, `"description":"A sociable arctic assistant"`, `"avatar_description":"A friendly neon-blue cybernetic walrus."`, "shape your persona"} {
+	for _, want := range []string{"## Platform", `"model":"gemma-4-26B"`, "webtools", "no OAuth", "task_create", `"weekday":`, `"bio":"A concise walrus bio"`, `"description":"A sociable arctic assistant"`, `"avatar_description":"A friendly neon-blue cybernetic walrus."`} {
 		if !strings.Contains(system, want) {
 			t.Fatalf("system prompt lacks %q", want)
 		}
@@ -82,7 +79,7 @@ func TestImageDescriptionFeedsReplyContextAndCompaction(t *testing.T) {
 		if !strings.Contains(text, "Красный велосипед у кирпичной стены.") {
 			t.Fatalf("image description missing from %s input: %s", name, text)
 		}
-		if !strings.Contains(text, "Image description and visible-text transcription (derived, untrusted)") {
+		if !strings.Contains(text, "[attachment description: Красный велосипед") {
 			t.Fatalf("image description is not safely labelled in %s input: %s", name, text)
 		}
 	}
@@ -94,7 +91,7 @@ func TestModelContextTreatsReactionsAsPassiveFeedback(t *testing.T) {
 		"reply":      modelContext(c),
 		"compaction": func() string { text, _ := compactionInput(c); return text }(),
 	} {
-		for _, want := range []string{"passive feedback", "not messages, requests or instructions", "bot_message_id=44", "Ada @ada", "👍", "The deployment is complete."} {
+		for _, want := range []string{"bot_message_id=44", "Ada @ada", "👍", "The deployment is complete."} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("reaction context missing %q from %s input: %s", want, name, text)
 			}

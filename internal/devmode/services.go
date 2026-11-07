@@ -31,17 +31,27 @@ func (e Embedder) Embed(_ context.Context, input string) ([]float32, error) {
 }
 
 func (Model) Complete(ctx context.Context, m []llm.Message) (string, error) {
-	for _, message := range m {
-		if len(message.Images) > 0 {
-			return "A simple local-development bot avatar with a friendly, neutral visual style.", nil
+	return "Это демонстрационный ответ mock-модели. Для живого ответа отключите llm.mock и запустите LM Studio.", nil
+}
+
+// CompleteTools answers with the terminal tool it is offered, so the mock
+// exercises the same agent loop as a real model.
+func (Model) CompleteTools(ctx context.Context, m []llm.Message, tools []llm.Tool) (llm.Message, error) {
+	answer := func(name string, args map[string]any) (llm.Message, error) {
+		data, _ := json.Marshal(args)
+		return llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "mock", Type: "function", Function: llm.ToolFunction{Name: name, Arguments: string(data)}}}}, nil
+	}
+	for _, tool := range tools {
+		switch tool.Function.Name {
+		case "reply":
+			return answer("reply", map[string]any{"text": "Это демонстрационный ответ mock-модели. Сообщение прошло через изолированный контекст и DB-очередь. Для живого ответа отключите llm.mock и запустите LM Studio."})
+		case "memory_save_summary":
+			return answer("memory_save_summary", map[string]any{"summary": "Демонстрационная сводка: в этом чате обсуждали планы и договорённости. Это ответ mock-модели, не LM Studio.", "corrections": []any{}})
+		case "image_describe":
+			return answer("image_describe", map[string]any{"text": "A simple local-development bot avatar with a friendly, neutral visual style."})
 		}
 	}
-	if strings.Contains(m[0].Content, "cumulative long-term memory") {
-		return "Демонстрационная сводка: в этом чате обсуждали планы и договорённости. Это ответ mock-модели, не LM Studio.", nil
-	}
-	reply := "Это демонстрационный ответ mock-модели. Сообщение прошло через изолированный контекст и DB-очередь. Для живого ответа отключите llm.mock и запустите LM Studio."
-	data, _ := json.Marshal(map[string]any{"reply": reply})
-	return string(data), nil
+	return llm.Message{Role: "assistant", Content: "mock"}, nil
 }
 
 type Sender struct{ next atomic.Int64 }

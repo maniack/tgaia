@@ -121,7 +121,7 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
 		for _, task := range tasks {
 			scope := chat.Scope{AgentID: task.AgentID, BotID: task.BotID, ChatID: task.ChatID, ThreadID: task.ThreadID}
 			if err := (&AgentStore{db: tx}).CheckActions(ctx, scope, task.UserID); err == nil {
-				payload, _ := json.Marshal(agent.JobPayload{Prompt: task.Prompt})
+				payload, _ := json.Marshal(agent.JobPayload{Prompt: task.Prompt, TaskID: task.ID, DueAt: task.RunAt, IntervalMS: task.IntervalMS})
 				if _, err := q.Enqueue(ctx, queue.Input{Scope: scope, ActorUserID: task.UserID, Key: fmt.Sprintf("task:%s:%d:%d", task.ID, task.Version, task.RunAt), Kind: "respond", Payload: payload, MaxAttempts: 3}); err != nil {
 					return err
 				}

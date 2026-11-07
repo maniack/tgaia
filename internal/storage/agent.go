@@ -248,7 +248,7 @@ func (a *AgentStore) ChatBehavior(ctx context.Context, scope chat.Scope) (agent.
 	if !scope.Valid() {
 		return behavior, errors.New("invalid conversation scope")
 	}
-	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Select("agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,chat_tool_rounds,chat_tool_calls,allow_skip,behavior_version AS version").Take(&behavior).Error
+	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Select("agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,chat_tool_rounds,chat_tool_calls,allow_skip,auto_approve_corrections,behavior_version AS version").Take(&behavior).Error
 	if err != nil {
 		return behavior, errors.New("conversation behavior unavailable")
 	}
@@ -264,13 +264,14 @@ func (a *AgentStore) SetChatBehavior(ctx context.Context, behavior agent.ChatBeh
 		return errors.New("chat tool limits out of range")
 	}
 	result := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Where("behavior_version=?", behavior.Version).Updates(map[string]any{
-		"group_response":   behavior.GroupResponse,
-		"respond_to_bots":  behavior.RespondToBots,
-		"loop_protection":  behavior.LoopProtection,
-		"chat_tool_rounds": behavior.ChatToolRounds,
-		"chat_tool_calls":  behavior.ChatToolCalls,
-		"allow_skip":       behavior.AllowSkip,
-		"behavior_version": gorm.Expr("behavior_version+1"),
+		"group_response":           behavior.GroupResponse,
+		"respond_to_bots":          behavior.RespondToBots,
+		"loop_protection":          behavior.LoopProtection,
+		"chat_tool_rounds":         behavior.ChatToolRounds,
+		"chat_tool_calls":          behavior.ChatToolCalls,
+		"allow_skip":               behavior.AllowSkip,
+		"auto_approve_corrections": behavior.AutoApproveCorrections,
+		"behavior_version":         gorm.Expr("behavior_version+1"),
 	})
 	if result.Error != nil || result.RowsAffected != 1 {
 		return errors.New("conversation behavior version conflict")

@@ -16,7 +16,7 @@ import (
 func TestMessageReactionsPersistWithoutQueueingResponse(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 28)
+			db, _ := databasesAtVersion(t, driver, 29)
 			ctx := context.Background()
 			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UpdateID: 1, MessageID: 1, UserID: 7, Name: "Ada", Username: "ada", Title: "Team", ChatType: "supergroup", Text: "hello", SentAt: time.Now(), Respond: false}); err != nil {
@@ -108,7 +108,7 @@ func TestMessageReactionsPersistWithoutQueueingResponse(t *testing.T) {
 func TestConversationBehaviorAndBotSenders(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 28)
+			db, _ := databasesAtVersion(t, driver, 29)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			second := chat.Scope{AgentID: "test", BotID: 1, ChatID: 200}
@@ -203,7 +203,7 @@ func TestConversationBehaviorAndBotSenders(t *testing.T) {
 func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 28)
+			db, _ := databasesAtVersion(t, driver, 29)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 10}
 			second := first

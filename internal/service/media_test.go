@@ -92,7 +92,7 @@ func TestAnonymousCannotSchedule(t *testing.T) {
 		t.Fatal("anonymous scheduled task", err)
 	}
 	raw, _ := json.Marshal(m.input)
-	if !strings.Contains(string(raw), "reader-only access") {
-		t.Fatal("reader instructions missing")
+	if !strings.Contains(string(raw), `\"from\":\"sender_chat\"`) {
+		t.Fatalf("event does not identify the hidden sender: %s", raw)
 	}
 }

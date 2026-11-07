@@ -138,22 +138,23 @@ func (f *thinkingFixture) Close() {}
 func (f *thinkingFixture) Complete(context.Context, []llm.Message) (string, error) {
 	return "", errors.New("unexpected plain completion")
 }
-func (f *thinkingFixture) CompleteJSON(_ context.Context, in []llm.Message, schema json.RawMessage) (string, error) {
-	f.finals++
-	f.lastFinal = in
-	f.lastSchema = string(schema)
-	return `{"reply":"Напомню через 5 минут."}`, nil
-}
 func (f *thinkingFixture) CompleteTools(_ context.Context, in []llm.Message, _ []llm.Tool) (llm.Message, error) {
 	f.turns++
-	if in[len(in)-1].Role == "tool" {
-		return llm.Message{Role: "assistant", ReasoningContent: "Thought: done.", Content: "Thought: the task is created. Internal note: answer briefly."}, nil
+	f.lastFinal = in
+	switch in[len(in)-1].Role {
+	case "tool":
+		return llm.Message{Role: "assistant", ReasoningContent: "Thought: done.", Content: "Напомню через 5 минут."}, nil
+	case "assistant":
+		f.finals++
+		answer := call("final", toolReply, `{"text":"Напомню через 5 минут."}`)
+		answer.ReasoningContent = "Thought: reply now."
+		return answer, nil
 	}
 	return llm.Message{Role: "assistant", ReasoningContent: "Thought: schedule it.", ToolCalls: []llm.ToolCall{{ID: "c1", Type: "function", Function: llm.ToolFunction{Name: toolTaskCreate, Arguments: `{"prompt":"Напомни пользователю выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`}}}}, nil
 }
 
-// A tool-phase text turn is an internal note. Only the closed-schema reply
-// reaches the user; thoughts and notes never do.
+// Reasoning never reaches the user: only the reply argument (or, failing
+// that, plain content) is delivered.
 func TestToolPhaseThoughtsNeverReachTheUser(t *testing.T) {
 	e, _, sender, scope := engineFixture(t)
 	f := &thinkingFixture{}
@@ -164,11 +165,8 @@ func TestToolPhaseThoughtsNeverReachTheUser(t *testing.T) {
 	if err := e.Respond(context.Background(), *job); err != nil {
 		t.Fatal(err)
 	}
-	if f.turns != 2 || f.finals != 1 || sender.calls != 1 {
-		t.Fatalf("expected two tool turns, one structured final call and one message, got %d/%d/%d", f.turns, f.finals, sender.calls)
-	}
-	if !strings.Contains(f.lastSchema, `"reply"`) || !strings.Contains(f.lastFinal[len(f.lastFinal)-1].Content, "Tool phase is finished") {
-		t.Fatal("final call must use the full response schema over the tool transcript")
+	if f.turns != 3 || f.finals != 1 || sender.calls != 1 {
+		t.Fatalf("expected action, prose, terminal turns and one message, got %d/%d/%d", f.turns, f.finals, sender.calls)
 	}
 	result, err := e.DB.Agent().Result(context.Background(), job.ID)
 	if err != nil || strings.Contains(result, "Thought") || strings.Contains(result, "Internal note") || !strings.Contains(result, "Напомню через 5 минут.") {

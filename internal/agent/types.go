@@ -169,8 +169,11 @@ type ChatBehavior struct {
 	ChatToolCalls  int `json:"chat_tool_calls"`
 	// AllowSkip lets the model reply with skip:true to suppress sending a
 	// message when there is nothing meaningful to say.
-	AllowSkip bool  `json:"allow_skip"`
-	Version   int64 `json:"version"`
+	AllowSkip bool `json:"allow_skip"`
+	// AutoApproveCorrections applies the bot's own behaviour corrections in
+	// this chat without an operator's review.
+	AutoApproveCorrections bool  `json:"auto_approve_corrections"`
+	Version                int64 `json:"version"`
 }
 
 // ReactionUpdate is the current reaction set reported by Telegram for one
@@ -235,6 +238,26 @@ type JobPayload struct {
 	Action         string `json:"action,omitempty"`
 	Text           string `json:"text,omitempty"`
 	Prompt         string `json:"prompt"`
-	ThroughID      int64  `json:"through_id"`
-	MessageID      int64  `json:"message_id"`
+	// Scheduled-run metadata, shown to the model as event data.
+	TaskID     string `json:"task_id,omitempty"`
+	DueAt      int64  `json:"due_at,omitempty"`
+	IntervalMS int64  `json:"interval_ms,omitempty"`
+	ThroughID  int64  `json:"through_id"`
+	MessageID  int64  `json:"message_id"`
+}
+
+// Correction is a behaviour change for one bot in one chat, proposed by the
+// bot itself during memory compaction. Only approved corrections reach the
+// bot's context; an operator approves them or enables auto-approval.
+type Correction struct {
+	ID        int64  `json:"id"`
+	AgentID   string `json:"agent_id"`
+	BotID     int64  `json:"bot_id"`
+	ChatID    int64  `json:"chat_id"`
+	Text      string `json:"text"`
+	Reason    string `json:"reason"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+	Version   int64  `json:"version"`
 }

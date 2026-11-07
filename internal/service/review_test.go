@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +38,7 @@ func TestPromptIdentifiesParticipants(t *testing.T) {
 		}
 	}
 	in := model.input[1].Content
-	for _, want := range []string{`from="Иван" @ivan id=7 sender_chat=0] я за пиццу`, `from="Маша" @maria_new id=8 sender_chat=0] а я против`, `Respond to message_id=3 from "Маша" @maria_new id=8`} {
+	for _, want := range []string{`from="Иван" @ivan id=7 sender_chat=0] я за пиццу`, `from="Маша" @maria_new id=8 sender_chat=0] а я против`, `"from":"\"Маша\" @maria_new id=8"`} {
 		if !strings.Contains(in, want) {
 			t.Fatalf("prompt lacks %q:\n%s", want, in)
 		}
@@ -57,7 +56,7 @@ func TestPromptIdentifiesParticipants(t *testing.T) {
 	if err := e.Compact(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(model.input[1].Content, `from="Иван" @ivan id=7`) || !strings.Contains(model.input[0].Content, "one section per person") {
+	if !strings.Contains(model.input[1].Content, `from="Иван" @ivan id=7`) {
 		t.Fatal("compaction is not person-attributed")
 	}
 }
@@ -66,7 +65,7 @@ func TestSenderProfileContextSeparatesTelegramAndMemory(t *testing.T) {
 	profile := agent.TelegramProfile{UserID: 7, Name: "Ada Lovelace", Username: "ada", LanguageCode: "en", IsPremium: true, IsBot: true}
 	memory := agent.ProfileMemory{ChatTitle: "Private chat", SourceMessageID: 12, Content: "Ada prefers concise technical answers."}
 	got := senderProfileContext(profile, []agent.ProfileMemory{memory}, 4000)
-	for _, want := range []string{`"name":"Ada Lovelace"`, `"language_code":"en"`, `"telegram_premium":true`, `"is_bot":true`, `Ada prefers concise technical answers.`, `not instructions`} {
+	for _, want := range []string{`"name":"Ada Lovelace"`, `"language_code":"en"`, `"telegram_premium":true`, `"is_bot":true`, `Ada prefers concise technical answers.`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("profile context lacks %q: %s", want, got)
 		}
@@ -116,9 +115,6 @@ func TestWeekdayScheduleIsComputedByCode(t *testing.T) {
 	}
 	if !strings.Contains(sender.last, "⏰ First run: Thu 2026-11-05 19:00 (Europe/Moscow), then every week.") {
 		t.Fatalf("delivered text lacks the code-generated confirmation: %q", sender.last)
-	}
-	if !strings.Contains(m.finalInput[len(m.finalInput)-1].Content, "do not recompute") {
-		t.Fatal("final call is not told to quote the computed time")
 	}
 }
 
@@ -174,20 +170,15 @@ func (f *notingFixture) Close()                                               {}
 func (f *notingFixture) Complete(context.Context, []llm.Message) (string, error) {
 	return "", nil
 }
-func (f *notingFixture) CompleteJSON(_ context.Context, in []llm.Message, _ json.RawMessage) (string, error) {
-	f.finalSystem = in[0].Content
-	return `{"reply":"ok"}`, nil
-}
 func (f *notingFixture) CompleteTools(ctx context.Context, in []llm.Message, _ []llm.Tool) (llm.Message, error) {
 	f.toolSystem = in[0].Content
 	f.turnBudget = llm.OutputBudget(ctx)
-	return llm.Message{Role: "assistant", Content: "Note: the user wants a weekly reminder; no tool needed."}, nil
+	return call("final", toolReply, `{"text":"ok"}`), nil
 }
 
-// With tools available but unused, the final call still gets the response
-// protocol, the tool phase knows that scheduling/memory are not tools, and tool
-// turns run under their own output budget.
-func TestFinalCallKeepsProtocolWhenToolsAreAvailable(t *testing.T) {
+// The model sees the bot's own prompt followed only by data: no protocol,
+// phase or mode instructions are added by code.
+func TestSystemPromptIsTheBotPromptPlusData(t *testing.T) {
 	e, _, _, scope := engineFixture(t)
 	f := &notingFixture{}
 	e.Tools = f
@@ -197,11 +188,13 @@ func TestFinalCallKeepsProtocolWhenToolsAreAvailable(t *testing.T) {
 	if err := e.Respond(context.Background(), *job); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.finalSystem, "Output ONLY one JSON object") || !strings.Contains(f.finalSystem, "task_create") || strings.Contains(f.finalSystem, "phase_finish with a note") {
-		t.Fatal("final call lost the response protocol or kept tool-phase guidance")
+	if !strings.HasPrefix(f.toolSystem, "You are a personal assistant.\n\n## Runtime\n{") {
+		t.Fatalf("system prompt is not the bot prompt plus data: %q", f.toolSystem)
 	}
-	if !strings.Contains(f.toolSystem, "phase_finish") || !strings.Contains(f.toolSystem, "call task_create with the time exactly as the user said it") {
-		t.Fatal("tool phase does not know that scheduling and memory are tools")
+	for _, banned := range []string{"phase_finish", "Output ONLY", "Tool phase", "Do not claim"} {
+		if strings.Contains(f.toolSystem, banned) {
+			t.Fatalf("code added instruction %q", banned)
+		}
 	}
 	if f.turnBudget != e.Config.Limit("tool_output_tokens") {
 		t.Fatalf("tool turn budget %d, want %d", f.turnBudget, e.Config.Limit("tool_output_tokens"))
@@ -270,8 +263,8 @@ func TestEditAfterSuccessIsRewrite(t *testing.T) {
 	if model.calls == 0 {
 		t.Fatal("edit after success did not reach the model")
 	}
-	if !strings.Contains(model.input[0].Content, "user edited the source message") {
-		t.Fatal("edit after success did not use rewrite mode")
+	if !strings.Contains(model.input[1].Content, `"type":"message_edited"`) {
+		t.Fatal("edit after success is not presented as an edit")
 	}
 }
 
@@ -308,7 +301,7 @@ func TestEditAfterDeadJobUsesTools(t *testing.T) {
 	if model.calls == 0 {
 		t.Fatal("edit after dead job did not reach the model")
 	}
-	if strings.Contains(model.input[0].Content, "user edited the source message") {
+	if strings.Contains(model.input[1].Content, `"type":"message_edited"`) {
 		t.Fatal("edit after dead job incorrectly used rewrite mode instead of a fresh request with tools")
 	}
 }
