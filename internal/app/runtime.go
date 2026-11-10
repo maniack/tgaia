@@ -431,7 +431,7 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 		stopHTTP(webhookLive)
 		httpWG.Wait()
 	}()
-	publish := func(next *snapshot) error {
+	publish := func(next *snapshot, settingsChanged bool) error {
 		previous := r.current.Load()
 		if err := r.monitor.Configure(ctx, next.config.OTLPEndpoint); err != nil {
 			return err
@@ -562,7 +562,7 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 			})
 		}
 		r.setPublishedStatus(next)
-		if previous != nil {
+		if settingsChanged {
 			r.log.Info("runtime settings applied")
 		}
 		return nil
@@ -577,7 +577,7 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 	if err != nil {
 		return err
 	}
-	if err = publish(first); err != nil {
+	if err = publish(first, false); err != nil {
 		return err
 	}
 	if first.config.Role != "worker" {
@@ -620,7 +620,7 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 			next, err := r.prepareSnapshot(prepareCtx, values, profileDue)
 			stop()
 			if err == nil {
-				err = publish(next)
+				err = publish(next, desired != applied)
 			}
 			if err != nil {
 				r.setStatus("error", err)

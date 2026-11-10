@@ -101,17 +101,35 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 	input := append([]llm.Message(nil), t.messages...)
 	calls, idle := 0, 0
 	uncertain, forced, noThinking := false, false, false
+	ranAny := false // at least one tool actually executed (ran=true)
 	draft := ""
 	last := "" // Previous call signature; models sometimes loop on one call.
 	for round := 0; ; round++ {
 		if round >= t.rounds+3 {
-			// Every path below converges on terminal-only turns; this only
-			// bounds a provider that ignores tool_choice entirely.
 			if draft != "" {
 				result.Prose = draft
 				return result, nil
 			}
-			return result, unfinished(fmt.Sprintf("tool_turn:%d", round))
+			if !ranAny {
+				// The model never called any tool; there is no assembled context
+				// worth completing over. Surface the failure.
+				return result, unfinished(fmt.Sprintf("tool_turn:%d", round))
+			}
+			// The provider keeps ignoring tool_choice after real tool use.
+			// Fall back to a plain completion over the assembled input so the
+			// user gets an answer from the work already done.
+			if err := e.reserveModel(ctx, t.job, t.compaction); err != nil {
+				return result, queue.WithPhase(err, fmt.Sprintf("tool_turn:%d", round))
+			}
+			text, err := e.Model.Complete(e.callContext(ctx, t, noThinking), input)
+			if err != nil {
+				return result, queue.WithPhase(err, fmt.Sprintf("tool_turn:%d", round))
+			}
+			if strings.TrimSpace(text) == "" {
+				return result, unfinished(fmt.Sprintf("tool_turn:%d", round))
+			}
+			result.Prose = strings.TrimSpace(text)
+			return result, nil
 		}
 		final := forced || len(t.actions) == 0 || round >= t.rounds-1 || calls >= t.calls || uncertain
 		offered := t.terminal
@@ -176,8 +194,13 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 		if len(message.ToolCalls) == 0 {
 			text := strings.TrimSpace(message.Content)
 			if draft == "" && text != "" {
+				if !ranAny {
+					// No tools executed yet: this is the answer, not a working note.
+					result.Prose = text
+					return result, nil
+				}
 				draft = text
-				// Ask once more with nothing but the terminal tools.
+				// Working note after tool use: ask once more with terminal tools only.
 				input = append(input, llm.Message{Role: "assistant", Content: text})
 				forced = true
 				continue
@@ -210,6 +233,7 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 				return result, err
 			}
 			executed = executed || ran
+			ranAny = ranAny || ran
 			last = call.Function.Name + ":" + call.Function.Arguments
 			if output == uncertainTool {
 				uncertain = true

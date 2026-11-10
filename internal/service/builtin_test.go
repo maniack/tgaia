@@ -124,33 +124,52 @@ func TestBuiltinToolsWithoutMCP(t *testing.T) {
 	}
 }
 
-// A model that answers in prose is asked once more with only the terminal
-// tools; if it still writes prose, that first text is the reply.
-func TestProseIsRetriedThenDelivered(t *testing.T) {
+// A model that answers in prose without calling any tool is delivered immediately
+// (R7: no double generation for simple answers).
+func TestProseDeliveredImmediatelyWhenNoToolsRan(t *testing.T) {
 	e, _, sender, scope := engineFixture(t)
 	prose := llm.Message{Role: "assistant", Content: "Привет! Чем помочь?"}
-	m := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{prose, {Role: "assistant", Content: ""}}}
+	m := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{prose}}
 	e.Model = m
 	accept(t, e, scope, 1, "привет", true)
 	if err := e.Respond(context.Background(), *take(t, e, "respond")); err != nil {
 		t.Fatal(err)
 	}
-	if m.calls != 2 || sender.last != "Привет! Чем помочь?" {
+	if m.calls != 1 || sender.last != "Привет! Чем помочь?" {
 		t.Fatalf("calls=%d delivered=%q", m.calls, sender.last)
-	}
-	for _, spec := range m.specs {
-		if spec.Function.Name != toolReply {
-			t.Fatalf("retry offered %s besides the terminal tools", spec.Function.Name)
-		}
 	}
 }
 
-// After the prose retry the model may still call reply; then that wins.
+// After real tool use a prose working note triggers one more forced turn so
+// the model can call reply; if it still writes prose, the note is delivered.
+func TestProseAfterToolUseIsRetriedThenDelivered(t *testing.T) {
+	e, _, sender, scope := engineFixture(t)
+	note := llm.Message{Role: "assistant", Content: "Нашёл результат."}
+	m := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{
+		call("c1", toolTaskList, `{}`),
+		note,
+		{Role: "assistant", Content: ""},
+	}}
+	e.Model = m
+	accept(t, e, scope, 1, "покажи задачи", true)
+	if err := e.Respond(context.Background(), *take(t, e, "respond")); err != nil {
+		t.Fatal(err)
+	}
+	if sender.last != "Нашёл результат." {
+		t.Fatalf("delivered %q", sender.last)
+	}
+}
+
+// After the forced retry the model may call reply; then that wins over the note.
 func TestProseRetryCanEndWithReply(t *testing.T) {
 	e, _, sender, scope := engineFixture(t)
-	m := &scriptedModel{reply: `{"reply":"Ответ через reply"}`, turns: []llm.Message{{Role: "assistant", Content: "черновик"}, finish("")}}
+	m := &scriptedModel{reply: `{"reply":"Ответ через reply"}`, turns: []llm.Message{
+		call("c1", toolTaskList, `{}`),
+		{Role: "assistant", Content: "черновик"},
+		finish(""),
+	}}
 	e.Model = m
-	accept(t, e, scope, 1, "привет", true)
+	accept(t, e, scope, 1, "покажи задачи", true)
 	if err := e.Respond(context.Background(), *take(t, e, "respond")); err != nil {
 		t.Fatal(err)
 	}
