@@ -120,17 +120,19 @@ func (m *Monitor) Handle(ctx context.Context, j queue.Job, h queue.Handler) erro
 	ctx, span := otel.Tracer("tgaia/worker").Start(ctx, "job."+j.Kind)
 	defer span.End()
 	ctx, jm := WithJobMetrics(ctx)
+	defer func() {
+		meas.inflight.Add(-1)
+		meas.count.Add(1)
+		meas.nanos.Add(time.Since(start).Nanoseconds())
+		meas.rounds.Add(jm.Rounds)
+		meas.denied.Add(jm.DeniedCalls)
+		if jm.Terminal != "" {
+			meas.mu.Lock()
+			meas.terminals[jm.Terminal]++
+			meas.mu.Unlock()
+		}
+	}()
 	err := h(ctx, j)
-	meas.inflight.Add(-1)
-	meas.count.Add(1)
-	meas.nanos.Add(time.Since(start).Nanoseconds())
-	meas.rounds.Add(jm.Rounds)
-	meas.denied.Add(jm.DeniedCalls)
-	if jm.Terminal != "" {
-		meas.mu.Lock()
-		meas.terminals[jm.Terminal]++
-		meas.mu.Unlock()
-	}
 	if err != nil {
 		meas.failures.Add(1)
 		class, terminal := queue.Classify(err)
