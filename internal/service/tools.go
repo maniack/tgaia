@@ -60,9 +60,12 @@ type turnResult struct {
 	Confirmations []string
 }
 
-// errUnfinished reports a run that ended without a terminal call or text.
-// Terminal=true: retrying the same checkpoint deterministically fails again.
-var errUnfinished = queue.Fail("llm_invalid", true, errors.New("model ended the turn without an answer"))
+// unfinished returns a terminal llm_invalid failure for runs that end without a
+// terminal call. A fresh value is built each time to avoid mutating a shared
+// global when WithPhase stamps the phase.
+func unfinished(phase string) error {
+	return queue.WithPhase(queue.Fail("llm_invalid", true, errors.New("model ended the turn without an answer")), phase)
+}
 
 // run executes the agent loop. Mechanics only, no instructions:
 //   - every model turn must be a tool call (tool_choice=required);
@@ -86,7 +89,7 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 			return result, err
 		}
 		if strings.TrimSpace(text) == "" {
-			return result, errUnfinished
+			return result, unfinished("")
 		}
 		result.Prose = strings.TrimSpace(text)
 		return result, nil
@@ -108,7 +111,7 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 				result.Prose = draft
 				return result, nil
 			}
-			return result, queue.WithPhase(errUnfinished, fmt.Sprintf("tool_turn:%d", round))
+			return result, unfinished(fmt.Sprintf("tool_turn:%d", round))
 		}
 		final := forced || len(t.actions) == 0 || round >= t.rounds-1 || calls >= t.calls || uncertain
 		offered := t.terminal
@@ -183,7 +186,7 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 				draft = text
 			}
 			if draft == "" {
-				return result, queue.WithPhase(errUnfinished, phase)
+				return result, unfinished(phase)
 			}
 			result.Prose = draft
 			return result, nil
@@ -275,13 +278,14 @@ func (e *Engine) execute(ctx context.Context, t turn, key string, call llm.ToolC
 		return repeatedTool, false, nil
 	case !local && t.session == nil:
 		return deniedTool, false, nil
-	case !local && t.session != nil:
+	case uncertain:
+		return `{"is_error":true,"content":"Not executed: an earlier call has an unknown outcome."}`, false, nil
+	}
+	if !local {
 		if err := t.session.Validate(name, call.Function.Arguments); err != nil {
 			msg, _ := json.Marshal(map[string]any{"is_error": true, "content": "Arguments do not match the tool schema: " + err.Error()})
 			return string(msg), false, nil
 		}
-	case uncertain:
-		return `{"is_error":true,"content":"Not executed: an earlier call has an unknown outcome."}`, false, nil
 	}
 	if previous.State != "started" {
 		fresh, err := e.DB.Agent().StartTool(ctx, t.job, key, string(encoded))
