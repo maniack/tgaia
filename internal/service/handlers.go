@@ -675,7 +675,11 @@ func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
 	if err != nil {
 		return err
 	}
-	outcome, err := e.run(ctx, turn{job: job, messages: []llm.Message{{Role: "system", Content: system + e.runtimeContext(job.Scope.BotID)}, {Role: "user", Content: text + corrections + "\n## Event\n{\"type\":\"memory_compaction\"}\n"}}, terminal: []llm.Tool{summaryTool(e.Config.Limit("compaction_summary_chars"))}, compaction: true, budget: e.Config.Limit("compaction_output_tokens"), thinking: &noThinking})
+	compactionEvent := "\n## Event\n{\"type\":\"memory_compaction\"}\n" +
+		"Write the summary in the same language the chat participants use. " +
+		"Record past events with their date (e.g. '2026-11-10: alert fired'), not as current states. " +
+		"Store explicit instructions from users as directives to yourself in imperative form.\n"
+	outcome, err := e.run(ctx, turn{job: job, messages: []llm.Message{{Role: "system", Content: system + e.runtimeContext(job.Scope.BotID)}, {Role: "user", Content: text + corrections + compactionEvent}}, terminal: []llm.Tool{summaryTool(e.Config.Limit("compaction_summary_chars"))}, compaction: true, budget: e.Config.Limit("compaction_output_tokens"), thinking: &noThinking})
 	if err != nil {
 		return queue.WithPhase(err, "compact")
 	}
