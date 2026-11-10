@@ -523,6 +523,17 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 func (e *Engine) deliver(ctx context.Context, job queue.Job, payload agent.JobPayload, sender Sender, prior []storage.ReplyLink, rewrite bool, pieces []piece) (bool, error) {
 	store := e.DB.Agent()
 	replaceAll := rewrite && len(pieces) == 1 && pieces[0].document
+	// If newer user messages arrived while we were thinking, quote the triggering
+	// message on the first part so the reply stays anchored in the conversation.
+	replier, canReply := sender.(interface {
+		SendReply(context.Context, int64, int64, int64, string) (int64, time.Time, error)
+	})
+	useReply := canReply && !rewrite && payload.MessageID > 0 && payload.Action != "failure_notice"
+	if useReply {
+		if has, _ := store.HasNewerUserMessage(ctx, job.Scope, payload.MessageID); !has {
+			useReply = false
+		}
+	}
 	for part, item := range pieces {
 		if err := store.Check(ctx, job.Scope, job.ActorUserID); err != nil {
 			return false, err
@@ -602,6 +613,8 @@ func (e *Engine) deliver(ctx context.Context, job queue.Job, payload agent.JobPa
 			} else {
 				id, at, err = sender.Send(ctx, job.Scope.ChatID, item.text)
 			}
+		} else if useReply && part == 0 {
+			id, at, err = replier.SendReply(ctx, job.Scope.ChatID, job.Scope.ThreadID, payload.MessageID, item.text)
 		} else if topic, ok := sender.(interface {
 			SendTopic(context.Context, int64, int64, string) (int64, time.Time, error)
 		}); ok {

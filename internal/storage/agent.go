@@ -1007,6 +1007,17 @@ func (a *AgentStore) MaxConversationID(ctx context.Context, s chat.Scope) (int64
 	return id, err
 }
 
+// HasNewerUserMessage reports whether the scope has any user message with a
+// Telegram message_id greater than afterMessageID. Used to decide whether to
+// quote the triggering message so the reply stays anchored in the thread.
+func (a *AgentStore) HasNewerUserMessage(ctx context.Context, s chat.Scope, afterMessageID int64) (bool, error) {
+	var count int64
+	err := scoped(a.db.WithContext(ctx).Table("conversation_messages"), s).
+		Where("thread_id=? AND message_id>? AND role='user'", s.ThreadID, afterMessageID).
+		Count(&count).Error
+	return count > 0, err
+}
+
 func (a *AgentStore) CreateChoiceSession(ctx context.Context, sess agent.ChoiceSession) (int64, error) {
 	if sess.AgentID == "" || sess.BotID == 0 || sess.ChatID == 0 || sess.UserID == 0 || len(sess.Options) == 0 {
 		return 0, errors.New("invalid choice session")
