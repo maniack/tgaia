@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -47,6 +48,23 @@ type Engine struct {
 	Model             Model
 	Embedder          MemoryEmbedder
 	Bots              map[int64]Sender
+	Log               *slog.Logger
+}
+
+func (e *Engine) log() *slog.Logger {
+	if e.Log != nil {
+		return e.Log
+	}
+	return slog.Default()
+}
+
+func (e *Engine) botName(botID int64) string {
+	for _, b := range e.Config.Bots {
+		if b.ID == botID {
+			return b.Name
+		}
+	}
+	return ""
 }
 
 // Response is the model's final envelope. Everything else the bot does
@@ -211,6 +229,8 @@ func mergeExplicitMemories(relevant, recent []agent.ExplicitMemory) []agent.Expl
 }
 
 func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
+	start := time.Now()
+	var runMeta turnResult
 	store := e.DB.Agent()
 	if err := store.Check(ctx, job.Scope, job.ActorUserID); err != nil {
 		return err
@@ -343,6 +363,7 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		if err != nil {
 			return err
 		}
+		runMeta = outcome
 		response, err := replyOf(outcome)
 		if err != nil {
 			return queue.WithPhase(err, "final")
@@ -363,6 +384,13 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		return errors.New("invalid stored result")
 	}
 	if result.Skip {
+		e.log().Info("job finished",
+			"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+			"chat_id", job.Scope.ChatID, "attempt", job.Attempt,
+			"status", "completed", "terminal", "skip",
+			"rounds", runMeta.Rounds, "tool_calls", runMeta.ToolCalls, "denied_calls", runMeta.DeniedCalls,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return nil
 	}
 	text := result.text()
@@ -380,6 +408,17 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 			return err
 		}
 	}
+	terminal := runMeta.Name
+	if terminal == "" && runMeta.Prose != "" {
+		terminal = "prose"
+	}
+	e.log().Info("job finished",
+		"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+		"chat_id", job.Scope.ChatID, "attempt", job.Attempt,
+		"status", "completed", "terminal", terminal,
+		"rounds", runMeta.Rounds, "tool_calls", runMeta.ToolCalls, "denied_calls", runMeta.DeniedCalls,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 	return nil
 }
 
@@ -479,6 +518,11 @@ func (e *Engine) deliver(ctx context.Context, job queue.Job, payload agent.JobPa
 			id, at, err = sender.Send(ctx, job.Scope.ChatID, item.text)
 		}
 		if err != nil {
+			e.log().Warn("delivery failed",
+				"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+				"chat_id", job.Scope.ChatID, "part", part,
+				slog.String("error", err.Error()),
+			)
 			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			_ = store.MarkUncertain(cleanup, job.ID, part)
 			stop()
@@ -582,6 +626,7 @@ func (e *Engine) FailureNotice(ctx context.Context, job queue.Job) error {
 	return err
 }
 func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
+	start := time.Now()
 	if err := e.DB.Agent().Check(ctx, job.Scope, 0); err != nil {
 		return err
 	}
@@ -626,7 +671,17 @@ func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
 		return err
 	}
 	summary = boundSummary(summary, e.Config.Limit("compaction_summary_chars"))
-	return e.DB.Agent().SaveSummary(ctx, job, history.Summary.ThroughID, through, summary, revision)
+	if err := e.DB.Agent().SaveSummary(ctx, job, history.Summary.ThroughID, through, summary, revision); err != nil {
+		return err
+	}
+	e.log().Info("job finished",
+		"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+		"chat_id", job.Scope.ChatID, "attempt", job.Attempt,
+		"status", "completed", "terminal", outcome.Name,
+		"rounds", outcome.Rounds, "tool_calls", outcome.ToolCalls, "denied_calls", outcome.DeniedCalls,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
+	return nil
 }
 
 // boundSummary enforces the memory size the prompt asks for but models do not

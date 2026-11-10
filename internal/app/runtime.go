@@ -175,7 +175,7 @@ func (r *runtime) prepareSnapshot(ctx context.Context, values map[string]string,
 			return nil, err
 		}
 	}
-	next := &snapshot{apiConfig: apiCfg, config: cfg, engine: &service.Engine{Config: cfg, Identities: map[int64]service.BotIdentity{}, DefaultPromptFile: cfg.DefaultPromptFile, DB: r.db, Bots: map[int64]service.Sender{}}, pollers: map[int64]*telegram.Client{}}
+	next := &snapshot{apiConfig: apiCfg, config: cfg, engine: &service.Engine{Config: cfg, Identities: map[int64]service.BotIdentity{}, DefaultPromptFile: cfg.DefaultPromptFile, DB: r.db, Bots: map[int64]service.Sender{}, Log: r.log}, pollers: map[int64]*telegram.Client{}}
 	old := r.current.Load()
 	if old != nil && old.config.MockLLM == cfg.MockLLM && old.config.LLMEndpoint == cfg.LLMEndpoint && old.config.LLMModel == cfg.LLMModel && old.config.LLMKey.Reveal() == cfg.LLMKey.Reveal() && maps.Equal(old.config.Limits, cfg.Limits) {
 		next.engine.Model = old.engine.Model

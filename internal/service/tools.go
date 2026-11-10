@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -58,6 +59,9 @@ type turnResult struct {
 	Arguments     string
 	Prose         string
 	Confirmations []string
+	Rounds        int // Loop iterations entered.
+	ToolCalls     int // Total tool call invocations (executed + denied).
+	DeniedCalls   int // Calls that did not execute (denied, uncertain-blocked, repeated, schema-invalid).
 }
 
 // unfinished returns a terminal llm_invalid failure for runs that end without a
@@ -76,8 +80,7 @@ func unfinished(phase string) error {
 //   - plain text instead of a call is kept as a draft and the model is asked
 //     once more with terminal tools only; if it still does not call one, the
 //     draft is the result.
-func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
-	var result turnResult
+func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 	model, ok := e.Model.(toolModel)
 	if !ok {
 		// A model without function calling can only answer in text.
@@ -100,11 +103,14 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 	}
 	input := append([]llm.Message(nil), t.messages...)
 	calls, idle := 0, 0
+	denied := 0
+	defer func() { result.ToolCalls = calls; result.DeniedCalls = denied }()
 	uncertain, forced, noThinking := false, false, false
 	ranAny := false // at least one tool actually executed (ran=true)
 	draft := ""
 	last := "" // Previous call signature; models sometimes loop on one call.
 	for round := 0; ; round++ {
+		result.Rounds = round + 1
 		if round >= t.rounds+3 {
 			if draft != "" {
 				result.Prose = draft
@@ -232,6 +238,9 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 			if err != nil {
 				return result, err
 			}
+			if !ran {
+				denied++
+			}
 			executed = executed || ran
 			ranAny = ranAny || ran
 			last = call.Function.Name + ":" + call.Function.Arguments
@@ -267,7 +276,9 @@ func (e *Engine) execute(ctx context.Context, t turn, key string, call llm.ToolC
 	name := call.Function.Name
 	local := t.builtin != nil && t.builtin.handles(name)
 	if final || !slices.ContainsFunc(t.actions, func(tool llm.Tool) bool { return tool.Function.Name == name }) {
+		reason := "not_offered"
 		if final {
+			reason = "budget_spent"
 			names := make([]string, len(t.terminal))
 			for i, tool := range t.terminal {
 				names[i] = tool.Function.Name
@@ -276,8 +287,10 @@ func (e *Engine) execute(ctx context.Context, t turn, key string, call llm.ToolC
 				"is_error": true,
 				"content":  fmt.Sprintf("Tool budget is spent. Only these tools are available now: %s. Call one of them.", strings.Join(names, ", ")),
 			})
+			e.log().Warn("tool denied", "tool", name, "reason", reason, "job_id", t.job.ID)
 			return string(msg), false, nil
 		}
+		e.log().Warn("tool denied", "tool", name, "reason", reason, "job_id", t.job.ID)
 		return deniedTool, false, nil
 	}
 	if err := e.DB.Agent().CheckActions(ctx, t.job.Scope, t.job.ActorUserID); err != nil {
@@ -327,6 +340,7 @@ func (e *Engine) execute(ctx context.Context, t turn, key string, call llm.ToolC
 	}
 	state := "completed"
 	if err != nil {
+		e.log().Warn("tool failed", "tool", name, "job_id", t.job.ID, slog.String("error", err.Error()))
 		if local && !t.builtin.mutates(name) {
 			// A failed read has no side effect; report it instead of fencing.
 			output = toolError("The tool failed; its data is unavailable.")
