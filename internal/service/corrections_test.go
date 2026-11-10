@@ -2,19 +2,27 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/maniack/tgaia/internal/agent"
 	"github.com/maniack/tgaia/internal/llm"
+	"github.com/maniack/tgaia/internal/queue"
 )
 
-// summaryModel answers compaction with a summary plus corrections and
-// replies through reply; it records what each run was shown.
+var reviewSeq atomic.Int64
+
+// summaryModel handles both compaction and reviewer calls:
+//   - compaction: responds to memory_save_summary with a plain summary
+//   - review: responds to review_done with the given corrections
 type summaryModel struct {
-	corrections string
-	systems     []string
-	inputs      []string
+	corrections string   // JSON array for review_done
+	systems     []string // recorded system prompts
+	inputs      []string // recorded user messages
 }
 
 func (m *summaryModel) Complete(context.Context, []llm.Message) (string, error) { return "", nil }
@@ -23,7 +31,11 @@ func (m *summaryModel) CompleteTools(_ context.Context, in []llm.Message, specs 
 	m.inputs = append(m.inputs, in[1].Content)
 	for _, spec := range specs {
 		if spec.Function.Name == toolSummary {
-			return call("s", toolSummary, `{"summary":"memory","corrections":`+m.corrections+`}`), nil
+			return call("s", toolSummary, `{"summary":"memory"}`), nil
+		}
+		if spec.Function.Name == toolReviewDone {
+			args, _ := json.Marshal(map[string]any{"corrections": json.RawMessage(m.corrections)})
+			return call("r", toolReviewDone, string(args)), nil
 		}
 	}
 	return call("r", toolReply, `{"text":"ok"}`), nil
@@ -44,6 +56,23 @@ func compactOnce(t *testing.T, e *Engine) {
 	}
 }
 
+func reviewOnce(t *testing.T, e *Engine, scope queue.Scope) {
+	t.Helper()
+	ctx := context.Background()
+	payload, _ := json.Marshal(agent.JobPayload{})
+	key := fmt.Sprintf("review:test:%d", reviewSeq.Add(1))
+	if _, err := e.DB.Queue().Enqueue(ctx, queue.Input{Scope: scope, Key: key, Kind: "review_behavior", Payload: payload, MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	job := take(t, e, "review_behavior")
+	if err := e.ReviewBehavior(ctx, *job); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCompactionProposesCorrectionsForReview(t *testing.T) {
 	e, _, _, scope := engineFixture(t)
 	ctx := context.Background()
@@ -53,6 +82,8 @@ func TestCompactionProposesCorrectionsForReview(t *testing.T) {
 		accept(t, e, scope, i, "сообщение", false)
 	}
 	compactOnce(t, e)
+	// Corrections come from ReviewBehavior, not Compact.
+	reviewOnce(t, e, scope)
 	list, err := e.DB.Agent().Corrections(ctx, scope, "")
 	if err != nil || len(list) != 1 || list[0].Status != "pending" || list[0].Reason != "Ада дважды поправила" {
 		t.Fatalf("proposal not stored as pending: %+v %v", list, err)
@@ -91,6 +122,7 @@ func TestDisabledCorrectionIsNotProposedAgainAndAutoApprove(t *testing.T) {
 		accept(t, e, scope, i, "сообщение", false)
 	}
 	compactOnce(t, e)
+	reviewOnce(t, e, scope)
 	list, _ := e.DB.Agent().Corrections(ctx, scope, "")
 	if err := e.DB.Agent().SetCorrection(ctx, scope, list[0].ID, list[0].Version, "disable"); err != nil {
 		t.Fatal(err)
@@ -105,8 +137,10 @@ func TestDisabledCorrectionIsNotProposedAgainAndAutoApprove(t *testing.T) {
 		accept(t, e, scope, i, "сообщение", false)
 	}
 	compactOnce(t, e)
+	// Reviewer sees existing corrections (including disabled ones).
+	reviewOnce(t, e, scope)
 	if !strings.Contains(m.inputs[len(m.inputs)-1], "- [disabled] Отвечай короче") {
-		t.Fatal("compaction does not see existing corrections")
+		t.Fatal("review does not see existing corrections")
 	}
 	list, _ = e.DB.Agent().Corrections(ctx, scope, "")
 	if len(list) != 2 || list[0].Text != "Пиши по-русски" || list[0].Status != "approved" {

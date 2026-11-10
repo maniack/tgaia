@@ -101,13 +101,18 @@ func engineFixture(t *testing.T) (*Engine, *testModel, *testSender, chat.Scope) 
 			t.Fatal(err)
 		}
 	}
-	promptFile := filepath.Join(t.TempDir(), "system-prompt.md")
+	dir := t.TempDir()
+	promptFile := filepath.Join(dir, "system-prompt.md")
 	if err := os.WriteFile(promptFile, []byte("You are a personal assistant."), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reviewerFile := filepath.Join(dir, "behavior-reviewer.md")
+	if err := os.WriteFile(reviewerFile, []byte("You are a neutral behaviour analyst."), 0600); err != nil {
 		t.Fatal(err)
 	}
 	model := &testModel{reply: `{"reply":"test answer"}`}
 	sender := &testSender{}
-	return &Engine{DefaultPromptFile: promptFile, DB: db, Model: model, Bots: map[int64]Sender{1: sender, 2: sender}}, model, sender, chat.Scope{AgentID: "a", BotID: 1, ChatID: 100}
+	return &Engine{DefaultPromptFile: promptFile, ReviewerPromptFile: reviewerFile, DB: db, Model: model, Bots: map[int64]Sender{1: sender, 2: sender}}, model, sender, chat.Scope{AgentID: "a", BotID: 1, ChatID: 100}
 }
 func accept(t *testing.T, e *Engine, scope chat.Scope, id int64, text string, respond bool) {
 	t.Helper()

@@ -43,7 +43,8 @@ type Engine struct {
 	Config            config.App
 	Identities        map[int64]BotIdentity
 	Now               func() time.Time
-	DefaultPromptFile string
+	DefaultPromptFile    string
+	ReviewerPromptFile   string
 	Tools             ToolProvider
 	DB                *storage.Database
 	Model             Model
@@ -122,7 +123,7 @@ func tighter(a, b int) int {
 const replyLimit = 64000
 
 func (e *Engine) Handlers() map[string]queue.Handler {
-	return map[string]queue.Handler{"respond": e.Respond, "compact": e.Compact, "message_action": e.MessageAction, "media": e.Describe, "failure_notice": e.FailureNotice}
+	return map[string]queue.Handler{"respond": e.Respond, "compact": e.Compact, "review_behavior": e.ReviewBehavior, "message_action": e.MessageAction, "media": e.Describe, "failure_notice": e.FailureNotice}
 }
 func modelContext(c agent.Context, budgets ...int) string {
 	budget := 100000
@@ -684,15 +685,86 @@ func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
 		return queue.WithPhase(err, "compact")
 	}
 	e.recordRunMetrics(ctx, outcome)
-	summary, proposals, err := summaryOf(outcome)
+	summary, err := summaryOf(outcome)
 	if err != nil {
 		return queue.WithPhase(err, "compact")
 	}
-	if err := e.proposeCorrections(ctx, job, proposals); err != nil {
+	summary = boundSummary(summary, e.Config.Limit("compaction_summary_chars"))
+	compactionCount, err := e.DB.Agent().SaveSummary(ctx, job, history.Summary.ThroughID, through, summary, revision)
+	if err != nil {
 		return err
 	}
-	summary = boundSummary(summary, e.Config.Limit("compaction_summary_chars"))
-	if err := e.DB.Agent().SaveSummary(ctx, job, history.Summary.ThroughID, through, summary, revision); err != nil {
+	reviewEvery := e.Config.Limit("behavior_review_every")
+	if reviewEvery <= 0 {
+		reviewEvery = 3
+	}
+	if compactionCount%int64(reviewEvery) == 0 {
+		key := fmt.Sprintf("review:%d", compactionCount)
+		payload, _ := json.Marshal(agent.JobPayload{})
+		if _, err := e.DB.Queue().Enqueue(ctx, queue.Input{Scope: job.Scope, Key: key, Kind: "review_behavior", Payload: payload, MaxAttempts: 2}); err != nil {
+			e.log().Warn("failed to enqueue review_behavior", "chat_id", job.Scope.ChatID, slog.String("error", err.Error()))
+		}
+	}
+	e.log().Info("job finished",
+		"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+		"chat_id", job.Scope.ChatID, "attempt", job.Attempt,
+		"status", "completed", "terminal", outcome.Name,
+		"rounds", outcome.Rounds, "tool_calls", outcome.ToolCalls, "denied_calls", outcome.DeniedCalls,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
+	return nil
+}
+
+// ReviewBehavior runs a neutral reviewer LLM over the chat's compaction summary
+// and recent messages to propose behaviour corrections. It is triggered after
+// every Nth successful compaction; the reviewer uses a separate prompt file so
+// it is never the bot itself correcting itself.
+func (e *Engine) ReviewBehavior(ctx context.Context, job queue.Job) error {
+	start := time.Now()
+	if err := e.DB.Agent().Check(ctx, job.Scope, 0); err != nil {
+		return err
+	}
+	reviewerPrompt, err := readDefaultPrompt(e.ReviewerPromptFile, 8000)
+	if err != nil {
+		return queue.Fail("handler_error", true, fmt.Errorf("behavior reviewer prompt unavailable: %w", err))
+	}
+	history, err := e.DB.Agent().Context(ctx, job.Scope, 0, e.Config.Limit("compaction_messages"))
+	if err != nil {
+		return err
+	}
+	corrections, err := e.correctionsContext(ctx, job.Scope, true)
+	if err != nil {
+		return err
+	}
+	var userContent strings.Builder
+	userContent.WriteString("## Conversation summary\n")
+	userContent.WriteString(history.Summary.Content)
+	userContent.WriteString("\n\n## Recent messages\n")
+	for _, m := range history.Messages {
+		userContent.WriteString(promptMessage(m))
+	}
+	if corrections != "" {
+		userContent.WriteString(corrections)
+	}
+	userContent.WriteString("\n## Event\n{\"type\":\"behavior_review\"}\n")
+	noThinking := false
+	outcome, err := e.run(ctx, turn{
+		job:        job,
+		messages:   []llm.Message{{Role: "system", Content: reviewerPrompt}, {Role: "user", Content: userContent.String()}},
+		terminal:   []llm.Tool{reviewTool},
+		compaction: true,
+		budget:     e.Config.Limit("compaction_output_tokens"),
+		thinking:   &noThinking,
+	})
+	if err != nil {
+		return queue.WithPhase(err, "review")
+	}
+	e.recordRunMetrics(ctx, outcome)
+	proposals, err := reviewOf(outcome)
+	if err != nil {
+		return queue.WithPhase(err, "review")
+	}
+	if err := e.proposeCorrections(ctx, job, proposals); err != nil {
 		return err
 	}
 	e.log().Info("job finished",

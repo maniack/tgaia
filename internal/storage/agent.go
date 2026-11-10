@@ -587,11 +587,14 @@ func (a *AgentStore) SimilarExplicitMemory(ctx context.Context, scope chat.Scope
 	}
 	return best, bestScore, nil
 }
-func (a *AgentStore) SaveSummary(ctx context.Context, job queue.Job, previous, through int64, content string, revision ...int64) error {
+// SaveSummary persists a new compaction summary and returns the new
+// compaction_count for this chat (monotonically incremented on each save).
+func (a *AgentStore) SaveSummary(ctx context.Context, job queue.Job, previous, through int64, content string, revision ...int64) (int64, error) {
 	if len(content) == 0 || len(content) > 16000 || through <= previous {
-		return errors.New("invalid summary")
+		return 0, errors.New("invalid summary")
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var count int64
+	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := fence(tx, job); err != nil {
 			return err
 		}
@@ -622,8 +625,17 @@ func (a *AgentStore) SaveSummary(ctx context.Context, job queue.Job, previous, t
 		if err := tx.Exec(`INSERT INTO memory_summaries (agent_id,bot_id,chat_id,thread_id,through_id,content) VALUES (?,?,?,0,?,?) ON CONFLICT (agent_id,bot_id,chat_id,thread_id) DO UPDATE SET through_id=excluded.through_id,content=excluded.content`, job.Scope.AgentID, job.Scope.BotID, job.Scope.ChatID, through, content).Error; err != nil {
 			return errors.New("saving summary failed")
 		}
+		var row struct{ CompactionCount int64 }
+		if err := scoped(tx.Table("chat_directory"), job.Scope).Select("compaction_count").Take(&row).Error; err != nil {
+			return errors.New("reading compaction count failed")
+		}
+		count = row.CompactionCount + 1
+		if err := scoped(tx.Table("chat_directory"), job.Scope).Update("compaction_count", count).Error; err != nil {
+			return errors.New("incrementing compaction count failed")
+		}
 		return nil
 	})
+	return count, err
 }
 func fence(tx *gorm.DB, job queue.Job) error {
 	return (&Database{orm: tx}).Queue().Extend(tx.Statement.Context, job.Receipt, 30*time.Second)

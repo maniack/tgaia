@@ -60,9 +60,10 @@ type Monitor struct {
 
 func New() *Monitor {
 	return &Monitor{jobs: map[string]*measurement{
-		"respond":        {classes: map[string]int64{}, terminals: map[string]int64{}},
-		"compact":        {classes: map[string]int64{}, terminals: map[string]int64{}},
-		"message_action": {classes: map[string]int64{}, terminals: map[string]int64{}},
+		"respond":         {classes: map[string]int64{}, terminals: map[string]int64{}},
+		"compact":         {classes: map[string]int64{}, terminals: map[string]int64{}},
+		"review_behavior": {classes: map[string]int64{}, terminals: map[string]int64{}},
+		"message_action":  {classes: map[string]int64{}, terminals: map[string]int64{}},
 	}}
 }
 
@@ -156,7 +157,7 @@ func (m *Monitor) Metrics(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprintf(w, "tgaia_worker_running %d\n", running)
 	fmt.Fprintln(w, "# TYPE tgaia_jobs_total counter\n# TYPE tgaia_job_errors_total counter\n# TYPE tgaia_job_duration_seconds_sum counter\n# TYPE tgaia_jobs_inflight gauge\n# TYPE tgaia_job_rounds_total counter\n# TYPE tgaia_job_denied_calls_total counter")
-	for _, kind := range []string{"respond", "compact", "message_action"} {
+	for _, kind := range []string{"respond", "compact", "review_behavior", "message_action"} {
 		v := m.jobs[kind]
 		fmt.Fprintf(w, "tgaia_jobs_total{kind=%q} %d\ntgaia_job_errors_total{kind=%q} %d\ntgaia_job_duration_seconds_sum{kind=%q} %f\ntgaia_jobs_inflight{kind=%q} %d\ntgaia_job_rounds_total{kind=%q} %d\ntgaia_job_denied_calls_total{kind=%q} %d\n",
 			kind, v.count.Load(),
@@ -168,7 +169,7 @@ func (m *Monitor) Metrics(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	fmt.Fprintln(w, "# TYPE tgaia_queue_failures_total counter")
-	for _, kind := range []string{"respond", "compact", "message_action"} {
+	for _, kind := range []string{"respond", "compact", "review_behavior", "message_action"} {
 		v := m.jobs[kind]
 		v.mu.Lock()
 		classes := make([]string, 0, len(v.classes))

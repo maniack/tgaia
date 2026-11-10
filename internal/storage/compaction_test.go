@@ -12,7 +12,7 @@ import (
 
 // Compaction runs per batch and never twice for one chat at the same time.
 func TestCompactionBatchingAndScopeDedup(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 29)
+	db, _ := databasesAtVersion(t, config.SQLite, 30)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	add := func(id int64, age time.Duration) {
@@ -57,7 +57,7 @@ func TestCompactionBatchingAndScopeDedup(t *testing.T) {
 	if err != nil || job == nil {
 		t.Fatal("compact job not claimable", err)
 	}
-	if err := db.Agent().SaveSummary(ctx, *job, 0, 3, "memory through 3", 0); err != nil {
+	if _, err := db.Agent().SaveSummary(ctx, *job, 0, 3, "memory through 3", 0); err != nil {
 		t.Fatal(err)
 	}
 	memory, err := db.Agent().Context(ctx, scope, 0, 50)
@@ -75,7 +75,7 @@ func TestCompactionBatchingAndScopeDedup(t *testing.T) {
 	}
 	// Fresh messages are not eligible, but too many unsummarized ones force a
 	// compaction of whatever has already aged out.
-	db2, _ := databasesAtVersion(t, config.SQLite, 29)
+	db2, _ := databasesAtVersion(t, config.SQLite, 30)
 	fresh := func(id int64, age time.Duration) {
 		t.Helper()
 		if err := db2.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: id, MessageID: id, Text: "m", SentAt: time.Now().Add(-age)}); err != nil {
@@ -96,7 +96,7 @@ func TestCompactionBatchingAndScopeDedup(t *testing.T) {
 	}
 	// Default policy keeps the historical per-message behaviour for callers that
 	// pass none (tests), so existing expectations hold.
-	db3, _ := databasesAtVersion(t, config.SQLite, 29)
+	db3, _ := databasesAtVersion(t, config.SQLite, 30)
 	if err := db3.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "m", SentAt: time.Now().Add(-2 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}

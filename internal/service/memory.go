@@ -24,29 +24,51 @@ const (
 
 func summaryTool(limit int) llm.Tool {
 	params := fmt.Sprintf(`{"type":"object","additionalProperties":false,"properties":{
-"summary":{"type":"string","maxLength":%d,"description":"Summary of the events and facts from the current memory together with the new messages. Replaces the current memory. Write in the same language the chat participants use. Record past events with their date (e.g. '2026-11-10: alert fired'), not as current states ('alert is active'). Explicit memory instructions from users must be stored as directives to yourself in imperative form ('Reply only in Russian'), not as descriptions of the user ('user wants Russian')."},
-"corrections":{"type":"array","maxItems":3,"description":"Changes to your own behaviour in this chat that the conversation calls for, e.g. when people corrected or complained about your answers. Empty when nothing needs to change. Existing ones are listed under Behaviour corrections.","items":{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string","maxLength":%d,"description":"The behaviour to adopt, as a short imperative rule, e.g. 'Reply only in Russian to this user'."},"reason":{"type":"string","maxLength":%d,"description":"What in the conversation shows it is needed."}},"required":["text","reason"]}}},
-"required":["summary","corrections"]}`, limit, storage.CorrectionTextLimit, storage.CorrectionTextLimit)
+"summary":{"type":"string","maxLength":%d,"description":"Summary of the events and facts from the current memory together with the new messages. Replaces the current memory. Write in the same language the chat participants use. Record past events with their date (e.g. '2026-11-10: alert fired'), not as current states ('alert is active'). Explicit memory instructions from users must be stored as directives to yourself in imperative form ('Reply only in Russian'), not as descriptions of the user ('user wants Russian')."}},
+"required":["summary"]}`, limit)
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolSummary, Description: "Save the updated long-term memory of this chat and end the turn.", Parameters: json.RawMessage(params)}}
 }
 
 var describeTool = llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolDescribe, Description: "Save a description of the attached image, including any readable text, to the conversation history and end the turn.", Parameters: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string","maxLength":4000}},"required":["text"]}`)}}
 
-func summaryOf(r turnResult) (string, []agent.Correction, error) {
-	if r.Name != toolSummary {
-		if text := strings.TrimSpace(r.Prose); text != "" {
-			return text, nil, nil
-		}
-		return "", nil, errors.New("model returned no summary")
+const toolReviewDone = "review_done"
+
+var reviewTool = llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolReviewDone,
+	Description: "Submit the behaviour review result and end the turn.",
+	Parameters: json.RawMessage(fmt.Sprintf(`{"type":"object","additionalProperties":false,"properties":{
+"corrections":{"type":"array","maxItems":5,"description":"New behaviour corrections to propose. Empty when no new corrections are warranted.","items":{"type":"object","additionalProperties":false,"properties":{
+"text":{"type":"string","maxLength":%d,"description":"Short imperative rule the bot should adopt, e.g. 'Reply only in Russian to this user'."},
+"reason":{"type":"string","maxLength":%d,"description":"Evidence from the conversation that justifies this correction."}},"required":["text","reason"]}}},
+"required":["corrections"]}`, storage.CorrectionTextLimit, storage.CorrectionTextLimit)),
+}}
+
+func reviewOf(r turnResult) ([]agent.Correction, error) {
+	if r.Name != toolReviewDone {
+		return nil, errors.New("reviewer did not call review_done")
 	}
 	var args struct {
-		Summary     string             `json:"summary"`
 		Corrections []agent.Correction `json:"corrections"`
 	}
-	if json.Unmarshal([]byte(r.Arguments), &args) != nil || strings.TrimSpace(args.Summary) == "" {
-		return "", nil, errors.New("model returned invalid compaction arguments")
+	if json.Unmarshal([]byte(r.Arguments), &args) != nil {
+		return nil, errors.New("reviewer returned invalid arguments")
 	}
-	return args.Summary, args.Corrections, nil
+	return args.Corrections, nil
+}
+
+func summaryOf(r turnResult) (string, error) {
+	if r.Name != toolSummary {
+		if text := strings.TrimSpace(r.Prose); text != "" {
+			return text, nil
+		}
+		return "", errors.New("model returned no summary")
+	}
+	var args struct {
+		Summary string `json:"summary"`
+	}
+	if json.Unmarshal([]byte(r.Arguments), &args) != nil || strings.TrimSpace(args.Summary) == "" {
+		return "", errors.New("model returned invalid compaction arguments")
+	}
+	return args.Summary, nil
 }
 
 func describedText(r turnResult) string {

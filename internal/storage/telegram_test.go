@@ -16,7 +16,7 @@ import (
 func TestMessageReactionsPersistWithoutQueueingResponse(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 29)
+			db, _ := databasesAtVersion(t, driver, 30)
 			ctx := context.Background()
 			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UpdateID: 1, MessageID: 1, UserID: 7, Name: "Ada", Username: "ada", Title: "Team", ChatType: "supergroup", Text: "hello", SentAt: time.Now(), Respond: false}); err != nil {
@@ -108,7 +108,7 @@ func TestMessageReactionsPersistWithoutQueueingResponse(t *testing.T) {
 func TestConversationBehaviorAndBotSenders(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 29)
+			db, _ := databasesAtVersion(t, driver, 30)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			second := chat.Scope{AgentID: "test", BotID: 1, ChatID: 200}
@@ -203,7 +203,7 @@ func TestConversationBehaviorAndBotSenders(t *testing.T) {
 func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 29)
+			db, _ := databasesAtVersion(t, driver, 30)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 10}
 			second := first
@@ -230,7 +230,7 @@ func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 			if err != nil || job == nil || job.Scope.ThreadID != 10 {
 				t.Fatal("queue lost topic", err)
 			}
-			if err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[1].ID, "old summary", 0); err != nil {
+			if _, err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[1].ID, "old summary", 0); err != nil {
 				t.Fatal(err)
 			}
 			if other, err := db.Agent().Context(ctx, second, 0, 50); err != nil || other.Summary.Content != "old summary" || len(other.Messages) != 0 {
@@ -251,7 +251,7 @@ func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 			if err != nil || c.Summary.Content != "" || len(c.Messages) != 2 || c.Messages[0].Text != "corrected" {
 				t.Fatal("edit not reflected", err)
 			}
-			if err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[1].ID, "stale", 0); err == nil {
+			if _, err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[1].ID, "stale", 0); err == nil {
 				t.Fatal("stale compaction committed")
 			}
 			if current, err := db.Agent().ResponseCurrent(ctx, first, 1, 1); err != nil || current {

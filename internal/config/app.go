@@ -16,7 +16,8 @@ type App struct {
 	Limits                map[string]string
 	OTLPEndpoint          string
 	ObservabilityListen   string
-	DefaultPromptFile     string
+	DefaultPromptFile        string
+	BehaviorReviewerFile     string
 	MCPServers            []MCPServer
 	LogLevel              slog.Level
 	AgentID               string
@@ -155,6 +156,10 @@ func (f *File) App() (App, error) {
 	c.DefaultPromptFile, err = filepath.Abs(filepath.Join(filepath.Dir(f.Path), "system-prompt.md"))
 	if err != nil {
 		return c, errors.New("cannot resolve default system prompt path")
+	}
+	c.BehaviorReviewerFile, err = filepath.Abs(filepath.Join(filepath.Dir(f.Path), "behavior-reviewer.md"))
+	if err != nil {
+		return c, errors.New("cannot resolve behavior reviewer prompt path")
 	}
 	return c, c.Validate()
 }
