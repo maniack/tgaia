@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	_ "time/tzdata" // embed IANA timezone database so IANA names work in scratch containers
 
 	"github.com/maniack/tgaia/internal/command"
 )

@@ -562,7 +562,9 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 			})
 		}
 		r.setPublishedStatus(next)
-		r.log.Info("runtime settings applied")
+		if previous != nil {
+			r.log.Info("runtime settings applied")
+		}
 		return nil
 	}
 	values, _, err := settings.LoadResolved(ctx, base.Role)

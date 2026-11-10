@@ -61,7 +61,8 @@ type turnResult struct {
 }
 
 // errUnfinished reports a run that ended without a terminal call or text.
-var errUnfinished = queue.Fail("llm_invalid", false, errors.New("model ended the turn without an answer"))
+// Terminal=true: retrying the same checkpoint deterministically fails again.
+var errUnfinished = queue.Fail("llm_invalid", true, errors.New("model ended the turn without an answer"))
 
 // run executes the agent loop. Mechanics only, no instructions:
 //   - every model turn must be a tool call (tool_choice=required);
@@ -107,7 +108,7 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 				result.Prose = draft
 				return result, nil
 			}
-			return result, errUnfinished
+			return result, queue.WithPhase(errUnfinished, fmt.Sprintf("tool_turn:%d", round))
 		}
 		final := forced || len(t.actions) == 0 || round >= t.rounds-1 || calls >= t.calls || uncertain
 		offered := t.terminal
@@ -182,7 +183,7 @@ func (e *Engine) run(ctx context.Context, t turn) (turnResult, error) {
 				draft = text
 			}
 			if draft == "" {
-				return result, errUnfinished
+				return result, queue.WithPhase(errUnfinished, phase)
 			}
 			result.Prose = draft
 			return result, nil
@@ -239,6 +240,17 @@ func (e *Engine) execute(ctx context.Context, t turn, key string, call llm.ToolC
 	name := call.Function.Name
 	local := t.builtin != nil && t.builtin.handles(name)
 	if final || !slices.ContainsFunc(t.actions, func(tool llm.Tool) bool { return tool.Function.Name == name }) {
+		if final {
+			names := make([]string, len(t.terminal))
+			for i, tool := range t.terminal {
+				names[i] = tool.Function.Name
+			}
+			msg, _ := json.Marshal(map[string]any{
+				"is_error": true,
+				"content":  fmt.Sprintf("Tool budget is spent. Only these tools are available now: %s. Call one of them.", strings.Join(names, ", ")),
+			})
+			return string(msg), false, nil
+		}
 		return deniedTool, false, nil
 	}
 	if err := e.DB.Agent().CheckActions(ctx, t.job.Scope, t.job.ActorUserID); err != nil {
@@ -261,8 +273,13 @@ func (e *Engine) execute(ctx context.Context, t turn, key string, call llm.ToolC
 		return uncertainTool, true, nil
 	case name+":"+call.Function.Arguments == last:
 		return repeatedTool, false, nil
-	case !local && (t.session == nil || t.session.Validate(name, call.Function.Arguments) != nil):
+	case !local && t.session == nil:
 		return deniedTool, false, nil
+	case !local && t.session != nil:
+		if err := t.session.Validate(name, call.Function.Arguments); err != nil {
+			msg, _ := json.Marshal(map[string]any{"is_error": true, "content": "Arguments do not match the tool schema: " + err.Error()})
+			return string(msg), false, nil
+		}
 	case uncertain:
 		return `{"is_error":true,"content":"Not executed: an earlier call has an unknown outcome."}`, false, nil
 	}
