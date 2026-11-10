@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -25,6 +27,25 @@ import (
 	"github.com/maniack/tgaia/internal/webauth"
 	"log/slog"
 )
+
+var (
+	vcsRevisionOnce sync.Once
+	vcsRevision     string
+)
+
+func buildRevision() string {
+	vcsRevisionOnce.Do(func() {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, s := range info.Settings {
+				if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+					vcsRevision = s.Value[:7]
+					return
+				}
+			}
+		}
+	})
+	return vcsRevision
+}
 
 //go:embed assets/*
 var assets embed.FS
@@ -269,7 +290,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		{"name": "Group moderation", "state": map[bool]string{true: "conditional", false: "off"}[s.Config.TelegramAdminTools], "detail": map[bool]string{true: "Each action also requires live Telegram administrator rights", false: "Enable telegram.admin_tools to allow permission checks"}[s.Config.TelegramAdminTools]},
 		{"name": "External integrations", "state": map[bool]string{true: "ready", false: "off"}[enabledMCP > 0], "detail": fmt.Sprintf("%d enabled MCP servers", enabledMCP)},
 	}
-	send(w, map[string]any{"generated_at": time.Now().UTC().Format(time.RFC3339), "database": "ready", "runtime": runtime, "activity": data, "capabilities": capabilities})
+	send(w, map[string]any{"generated_at": time.Now().UTC().Format(time.RFC3339), "database": "ready", "runtime": runtime, "activity": data, "capabilities": capabilities, "revision": buildRevision()})
 }
 func scope(r *http.Request) chat.Scope {
 	bot, _ := strconv.ParseInt(r.URL.Query().Get("bot_id"), 10, 64)

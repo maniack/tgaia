@@ -47,6 +47,7 @@ type snapshot struct {
 type applyStatus struct {
 	State       string             `json:"state"`
 	Error       string             `json:"error,omitempty"`
+	StartedAt   time.Time          `json:"started_at,omitempty"`
 	AppliedAt   time.Time          `json:"applied_at,omitempty"`
 	BotProfiles []botProfileStatus `json:"bot_profiles,omitempty"`
 }
@@ -94,7 +95,8 @@ func (r *runtime) setPublishedStatus(next *snapshot) {
 		profiles = append(profiles, botProfileStatus{BotID: bot.ID, Name: identity.Name, Username: identity.Username, Bio: identity.Bio, Description: identity.Description, AvatarPresent: identity.AvatarPresent, AvatarDescription: identity.AvatarDescription, RefreshedAt: identity.ProfileRefreshedAt, ContextIncluded: included})
 	}
 	r.statusMu.Lock()
-	r.status = applyStatus{State: "applied", AppliedAt: time.Now().UTC(), BotProfiles: profiles}
+	startedAt := r.status.StartedAt
+	r.status = applyStatus{State: "applied", StartedAt: startedAt, AppliedAt: time.Now().UTC(), BotProfiles: profiles}
 	r.statusMu.Unlock()
 }
 
@@ -405,6 +407,9 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 		r.issuer = issuer
 	}
 	r.log = slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: &r.level}))
+	r.statusMu.Lock()
+	r.status.StartedAt = time.Now().UTC()
+	r.statusMu.Unlock()
 	var appLive, observabilityLive, webhookLive *httpInstance
 	var workers, polling *runningGroup
 	var httpWG sync.WaitGroup
