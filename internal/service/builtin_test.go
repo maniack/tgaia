@@ -17,6 +17,7 @@ import (
 type scriptedModel struct {
 	turns      []llm.Message
 	reply      string
+	prose      string // returned by Complete (plain completion fallback)
 	calls      int
 	finals     int
 	toolInputs [][]llm.Message
@@ -56,6 +57,9 @@ func terminalCall(reply string) llm.Message {
 	return call("final", toolReply, `{"text":`+quote(r.Reply)+`}`)
 }
 func (m *scriptedModel) Complete(context.Context, []llm.Message) (string, error) {
+	if m.prose != "" {
+		return m.prose, nil
+	}
 	return m.reply, nil
 }
 func (m *scriptedModel) CompleteTools(ctx context.Context, in []llm.Message, specs []llm.Tool) (llm.Message, error) {
@@ -143,19 +147,27 @@ func TestProseDeliveredImmediatelyWhenNoToolsRan(t *testing.T) {
 // After real tool use a prose working note triggers one more forced turn so
 // the model can call reply; if it still writes prose, the note is delivered.
 func TestProseAfterToolUseIsRetriedThenDelivered(t *testing.T) {
+	// After tool use the model writes a working note (no tool_calls) and then
+	// the forced terminal-only round comes back empty. The working note must NOT
+	// be delivered as-is; instead a plain completion is called and its text
+	// becomes the answer.
 	e, _, sender, scope := engineFixture(t)
 	note := llm.Message{Role: "assistant", Content: "Нашёл результат."}
-	m := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{
-		call("c1", toolTaskList, `{}`),
-		note,
-		{Role: "assistant", Content: ""},
-	}}
+	m := &scriptedModel{
+		reply: `{"reply":"ok"}`,
+		prose: "Итоговый ответ пользователю.",
+		turns: []llm.Message{
+			call("c1", toolTaskList, `{}`),
+			note,
+			{Role: "assistant", Content: ""},
+		},
+	}
 	e.Model = m
 	accept(t, e, scope, 1, "покажи задачи", true)
 	if err := e.Respond(context.Background(), *take(t, e, "respond")); err != nil {
 		t.Fatal(err)
 	}
-	if sender.last != "Нашёл результат." {
+	if sender.last != "Итоговый ответ пользователю." {
 		t.Fatalf("delivered %q", sender.last)
 	}
 }

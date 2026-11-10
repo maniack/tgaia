@@ -112,18 +112,15 @@ func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 	for round := 0; ; round++ {
 		result.Rounds = round + 1
 		if round >= t.rounds+3 {
-			if draft != "" {
-				result.Prose = draft
-				return result, nil
-			}
 			if !ranAny {
 				// The model never called any tool; there is no assembled context
 				// worth completing over. Surface the failure.
 				return result, unfinished(fmt.Sprintf("tool_turn:%d", round))
 			}
 			// The provider keeps ignoring tool_choice after real tool use.
-			// Fall back to a plain completion over the assembled input so the
-			// user gets an answer from the work already done.
+			// Fall back to a plain completion over the assembled input. The draft
+			// (if any) is a working note, not an answer — complete over the full
+			// context instead so the model can write a proper reply.
 			if err := e.reserveModel(ctx, t.job, t.compaction); err != nil {
 				return result, queue.WithPhase(err, fmt.Sprintf("tool_turn:%d", round))
 			}
@@ -142,6 +139,7 @@ func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 		if !final {
 			offered = append(append([]llm.Tool(nil), t.actions...), t.terminal...)
 		}
+		terminalOnly := final && len(t.actions) > 0 // forced into terminal-only after real tool use
 		key := fmt.Sprintf("turn:%d", round)
 		phase := fmt.Sprintf("tool_turn:%d", round)
 		var message llm.Message
@@ -165,7 +163,10 @@ func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 				return result, queue.WithPhase(err, phase)
 			}
 			var err error
-			message, err = model.CompleteTools(e.callContext(ctx, t, noThinking), input, offered)
+			// On terminal-only rounds thinking is wasteful: the only valid output is
+			// a single tool call, which needs no reasoning budget.
+			callNoThinking := noThinking || terminalOnly
+			message, err = model.CompleteTools(e.callContext(ctx, t, callNoThinking), input, offered)
 			if truncated(err) && !noThinking {
 				// Reasoning ate the output budget; a call needs far less.
 				noThinking = true
@@ -179,9 +180,17 @@ func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 				continue
 			}
 			if class, _ := queue.Classify(err); draft != "" && (class == "llm_invalid" || truncated(err)) {
-				// The retry after a prose answer came back empty or broken:
-				// the model considers its text the answer, and so do we.
-				result.Prose = draft
+				// The terminal-only retry failed: fall back to a plain completion over
+				// the full assembled context so the user gets a proper answer rather
+				// than the raw working note.
+				if ferr := e.reserveModel(ctx, t.job, t.compaction); ferr != nil {
+					return result, queue.WithPhase(ferr, phase)
+				}
+				text, ferr := e.Model.Complete(e.callContext(ctx, t, true), input)
+				if ferr != nil || strings.TrimSpace(text) == "" {
+					return result, queue.WithPhase(err, phase)
+				}
+				result.Prose = strings.TrimSpace(text)
 				return result, nil
 			}
 			if err != nil {
@@ -217,7 +226,18 @@ func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 			if draft == "" {
 				return result, unfinished(phase)
 			}
-			result.Prose = draft
+			// draft is a working note, not a user-facing answer. Fall back to a plain
+			// completion over the assembled context so the model writes a proper reply.
+			if err := e.reserveModel(ctx, t.job, t.compaction); err != nil {
+				return result, queue.WithPhase(err, phase)
+			}
+			text2, err := e.Model.Complete(e.callContext(ctx, t, true), input)
+			if err != nil || strings.TrimSpace(text2) == "" {
+				// Completion failed; deliver the draft rather than nothing.
+				result.Prose = draft
+				return result, nil
+			}
+			result.Prose = strings.TrimSpace(text2)
 			return result, nil
 		}
 		for _, call := range message.ToolCalls {
