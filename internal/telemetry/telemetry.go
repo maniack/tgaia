@@ -20,10 +20,35 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
+// JobMetrics is injected into the handler context by Monitor.Handle so that
+// Engine can record per-job run statistics without a direct dependency on Monitor.
+type JobMetrics struct {
+	Rounds      int64
+	DeniedCalls int64
+	Terminal    string
+}
+
+type jobMetricsKey struct{}
+
+// WithJobMetrics returns a child context carrying a *JobMetrics and the pointer.
+func WithJobMetrics(ctx context.Context) (context.Context, *JobMetrics) {
+	m := &JobMetrics{}
+	return context.WithValue(ctx, jobMetricsKey{}, m), m
+}
+
+// JobMetricsFromContext retrieves the *JobMetrics injected by Monitor.Handle.
+// Returns nil when called outside a monitored handler.
+func JobMetricsFromContext(ctx context.Context) *JobMetrics {
+	v, _ := ctx.Value(jobMetricsKey{}).(*JobMetrics)
+	return v
+}
+
 type measurement struct {
 	count, failures, nanos, inflight atomic.Int64
+	rounds, denied                   atomic.Int64
 	mu                               sync.Mutex
 	classes                          map[string]int64
+	terminals                        map[string]int64
 }
 type Monitor struct {
 	WorkerRunning atomic.Bool
@@ -34,7 +59,11 @@ type Monitor struct {
 }
 
 func New() *Monitor {
-	return &Monitor{jobs: map[string]*measurement{"respond": {classes: map[string]int64{}}, "compact": {classes: map[string]int64{}}, "message_action": {classes: map[string]int64{}}}}
+	return &Monitor{jobs: map[string]*measurement{
+		"respond":        {classes: map[string]int64{}, terminals: map[string]int64{}},
+		"compact":        {classes: map[string]int64{}, terminals: map[string]int64{}},
+		"message_action": {classes: map[string]int64{}, terminals: map[string]int64{}},
+	}}
 }
 
 // failureClasses bounds the label set; classes outside it count as "other".
@@ -82,29 +111,35 @@ func (m *Monitor) Close() {
 	}
 }
 func (m *Monitor) Handle(ctx context.Context, j queue.Job, h queue.Handler) error {
-	measurement := m.jobs[j.Kind]
-	if measurement == nil {
+	meas := m.jobs[j.Kind]
+	if meas == nil {
 		return h(ctx, j)
 	}
 	start := time.Now()
-	measurement.inflight.Add(1)
+	meas.inflight.Add(1)
 	ctx, span := otel.Tracer("tgaia/worker").Start(ctx, "job."+j.Kind)
 	defer span.End()
-	defer func() {
-		measurement.inflight.Add(-1)
-		measurement.count.Add(1)
-		measurement.nanos.Add(time.Since(start).Nanoseconds())
-	}()
+	ctx, jm := WithJobMetrics(ctx)
 	err := h(ctx, j)
+	meas.inflight.Add(-1)
+	meas.count.Add(1)
+	meas.nanos.Add(time.Since(start).Nanoseconds())
+	meas.rounds.Add(jm.Rounds)
+	meas.denied.Add(jm.DeniedCalls)
+	if jm.Terminal != "" {
+		meas.mu.Lock()
+		meas.terminals[jm.Terminal]++
+		meas.mu.Unlock()
+	}
 	if err != nil {
-		measurement.failures.Add(1)
+		meas.failures.Add(1)
 		class, terminal := queue.Classify(err)
 		if !failureClasses[class] {
 			class = "other"
 		}
-		measurement.mu.Lock()
-		measurement.classes[class]++
-		measurement.mu.Unlock()
+		meas.mu.Lock()
+		meas.classes[class]++
+		meas.mu.Unlock()
 		span.SetStatus(codes.Error, "handler failed")
 		span.SetAttributes(attribute.String("failure.class", class), attribute.Bool("failure.terminal", terminal), attribute.String("failure.phase", queue.Phase(err)))
 	}
@@ -118,10 +153,17 @@ func (m *Monitor) Metrics(w http.ResponseWriter, r *http.Request) {
 		running = 1
 	}
 	fmt.Fprintf(w, "tgaia_worker_running %d\n", running)
-	fmt.Fprintln(w, "# TYPE tgaia_jobs_total counter\n# TYPE tgaia_job_errors_total counter\n# TYPE tgaia_job_duration_seconds_sum counter\n# TYPE tgaia_jobs_inflight gauge")
+	fmt.Fprintln(w, "# TYPE tgaia_jobs_total counter\n# TYPE tgaia_job_errors_total counter\n# TYPE tgaia_job_duration_seconds_sum counter\n# TYPE tgaia_jobs_inflight gauge\n# TYPE tgaia_job_rounds_total counter\n# TYPE tgaia_job_denied_calls_total counter")
 	for _, kind := range []string{"respond", "compact", "message_action"} {
 		v := m.jobs[kind]
-		fmt.Fprintf(w, "tgaia_jobs_total{kind=%q} %d\ntgaia_job_errors_total{kind=%q} %d\ntgaia_job_duration_seconds_sum{kind=%q} %f\ntgaia_jobs_inflight{kind=%q} %d\n", kind, v.count.Load(), kind, v.failures.Load(), kind, float64(v.nanos.Load())/1e9, kind, v.inflight.Load())
+		fmt.Fprintf(w, "tgaia_jobs_total{kind=%q} %d\ntgaia_job_errors_total{kind=%q} %d\ntgaia_job_duration_seconds_sum{kind=%q} %f\ntgaia_jobs_inflight{kind=%q} %d\ntgaia_job_rounds_total{kind=%q} %d\ntgaia_job_denied_calls_total{kind=%q} %d\n",
+			kind, v.count.Load(),
+			kind, v.failures.Load(),
+			kind, float64(v.nanos.Load())/1e9,
+			kind, v.inflight.Load(),
+			kind, v.rounds.Load(),
+			kind, v.denied.Load(),
+		)
 	}
 	fmt.Fprintln(w, "# TYPE tgaia_queue_failures_total counter")
 	for _, kind := range []string{"respond", "compact", "message_action"} {
@@ -135,6 +177,23 @@ func (m *Monitor) Metrics(w http.ResponseWriter, r *http.Request) {
 		for _, class := range classes {
 			fmt.Fprintf(w, "tgaia_queue_failures_total{kind=%q,class=%q} %d\n", kind, class, v.classes[class])
 		}
+		terminals := make([]string, 0, len(v.terminals))
+		for t := range v.terminals {
+			terminals = append(terminals, t)
+		}
+		sort.Strings(terminals)
+		termCounts := make([]int64, len(terminals))
+		for i, t := range terminals {
+			termCounts[i] = v.terminals[t]
+		}
 		v.mu.Unlock()
+		if len(terminals) > 0 {
+			if kind == "respond" {
+				fmt.Fprintln(w, "# TYPE tgaia_job_terminal_total counter")
+			}
+			for i, t := range terminals {
+				fmt.Fprintf(w, "tgaia_job_terminal_total{kind=%q,terminal=%q} %d\n", kind, t, termCounts[i])
+			}
+		}
 	}
 }

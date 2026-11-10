@@ -34,3 +34,32 @@ func TestJobMetricsAndTrace(t *testing.T) {
 		t.Fatal(spans)
 	}
 }
+
+func TestRunMetricsRecorded(t *testing.T) {
+	m := New()
+	err := m.Handle(context.Background(), queue.Job{Kind: "respond"}, func(ctx context.Context, _ queue.Job) error {
+		jm := JobMetricsFromContext(ctx)
+		if jm == nil {
+			t.Fatal("JobMetrics not in context")
+		}
+		jm.Rounds = 3
+		jm.DeniedCalls = 1
+		jm.Terminal = "reply"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	m.Metrics(w, httptest.NewRequest("GET", "/metrics", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`tgaia_job_rounds_total{kind="respond"} 3`,
+		`tgaia_job_denied_calls_total{kind="respond"} 1`,
+		`tgaia_job_terminal_total{kind="respond",terminal="reply"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in:\n%s", want, body)
+		}
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"github.com/maniack/tgaia/internal/messages"
 	"github.com/maniack/tgaia/internal/queue"
 	"github.com/maniack/tgaia/internal/storage"
+	"github.com/maniack/tgaia/internal/telemetry"
 )
 
 type Model interface {
@@ -65,6 +66,20 @@ func (e *Engine) botName(botID int64) string {
 		}
 	}
 	return ""
+}
+
+func (e *Engine) recordRunMetrics(ctx context.Context, r turnResult) {
+	jm := telemetry.JobMetricsFromContext(ctx)
+	if jm == nil {
+		return
+	}
+	jm.Rounds = int64(r.Rounds)
+	jm.DeniedCalls = int64(r.DeniedCalls)
+	terminal := r.Name
+	if terminal == "" && r.Prose != "" {
+		terminal = "prose"
+	}
+	jm.Terminal = terminal
 }
 
 // Response is the model's final envelope. Everything else the bot does
@@ -364,6 +379,7 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 			return err
 		}
 		runMeta = outcome
+		e.recordRunMetrics(ctx, outcome)
 		response, err := replyOf(outcome)
 		if err != nil {
 			return queue.WithPhase(err, "final")
@@ -663,6 +679,7 @@ func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
 	if err != nil {
 		return queue.WithPhase(err, "compact")
 	}
+	e.recordRunMetrics(ctx, outcome)
 	summary, proposals, err := summaryOf(outcome)
 	if err != nil {
 		return queue.WithPhase(err, "compact")
