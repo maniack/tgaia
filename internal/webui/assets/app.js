@@ -99,7 +99,7 @@ let refreshPromise=null;
 function refresh(){
  if(refreshPromise)return refreshPromise;
  const preserveUI=!!snapshot,open=captureOpenDetails(),scroll=captureScrollState();
- refreshPromise=(async()=>{snapshot=await api('/api/state');csrf=snapshot.csrf;$('identity').textContent=`Signed in · ${snapshot.group}`;renderMode();await Promise.all(['bots','chats','tasks','users','deliveries','tools','audit'].map(kind=>fetchList(kind)));renderPaged();if(preserveUI)restoreOpenDetails(open);$('last-updated').textContent='Updated '+new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});if(selected)await loadContext(true);if(preserveUI){restoreOpenDetails(open);restoreScrollState(scroll)}})().finally(()=>{refreshPromise=null});
+ refreshPromise=(async()=>{snapshot=await api('/api/state');csrf=snapshot.csrf;$('identity').textContent=`Signed in · ${snapshot.group}`;renderMode();await Promise.all(['bots','chats','tasks','users','deliveries','tools','audit','jobs'].map(kind=>fetchList(kind)));renderPaged();if(preserveUI)restoreOpenDetails(open);$('last-updated').textContent='Updated '+new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});if(selected)await loadContext(true);if(preserveUI){restoreOpenDetails(open);restoreScrollState(scroll)}})().finally(()=>{refreshPromise=null});
  return refreshPromise;
 }
 async function refreshVisible(){
@@ -228,7 +228,7 @@ const boot=async()=>{await refresh();tab(savedTab())};background('startup',boot)
 document.addEventListener('keydown',e=>{if(e.key==='r'&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!e.target.closest('input,textarea,select')&&!document.querySelector('dialog[open]'))act(refreshVisible)()});
 window.addEventListener('offline',()=>reportIssue('connectivity',new RequestError('Offline',{kind:'offline'}),()=>background('connectivity',refreshVisible)));
 window.addEventListener('online',()=>void background('connectivity',refreshVisible));
-window.addEventListener('error',()=>reportIssue('unexpected',new RequestError('Interface error',{kind:'unexpected'}),()=>location.reload()));
+window.addEventListener('error',event=>{if(!event.error)return;reportIssue('unexpected',event.error,()=>location.reload())});
 window.addEventListener('unhandledrejection',event=>{event.preventDefault();reportIssue('unexpected',event.reason instanceof Error?event.reason:new RequestError('Interface error',{kind:'unexpected'}),()=>location.reload())});
 
 let mcpSnapshot;
