@@ -112,6 +112,12 @@ type Message struct {
 	CaptionEntities []Entity `json:"caption_entities"`
 	Reply           *Message `json:"reply_to_message"`
 }
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    User     `json:"from"`
+	Message *Message `json:"message"`
+	Data    string   `json:"data"`
+}
 type Update struct {
 	EditedMessage        *Message                     `json:"edited_message"`
 	EditedChannelPost    *Message                     `json:"edited_channel_post"`
@@ -120,6 +126,7 @@ type Update struct {
 	ChannelPost          *Message                     `json:"channel_post"`
 	MessageReaction      *MessageReactionUpdated      `json:"message_reaction"`
 	MessageReactionCount *MessageReactionCountUpdated `json:"message_reaction_count"`
+	CallbackQuery        *CallbackQuery               `json:"callback_query"`
 }
 
 func reactionValue(value ReactionType) agent.Reaction {
@@ -484,9 +491,62 @@ func (c *Client) UnpinMessage(ctx context.Context, chatID, messageID int64) erro
 }
 func BotPath(id int64) string { return "/telegram/" + strconv.FormatInt(id, 10) }
 
+func (c *Client) AnswerCallbackQuery(ctx context.Context, queryID, text string) error {
+	body := map[string]any{"callback_query_id": queryID}
+	if text != "" {
+		body["text"] = text
+		body["show_alert"] = false
+	}
+	return c.call(ctx, "answerCallbackQuery", body, nil)
+}
+
+func (c *Client) EditMessageReplyMarkup(ctx context.Context, chatID, messageID int64, keyboard [][]agent.InlineButton) error {
+	markup := map[string]any{"inline_keyboard": [][]map[string]any{}}
+	if len(keyboard) > 0 {
+		rows := make([][]map[string]any, len(keyboard))
+		for i, row := range keyboard {
+			cells := make([]map[string]any, len(row))
+			for j, btn := range row {
+				cells[j] = map[string]any{"text": btn.Text, "callback_data": btn.CallbackData}
+			}
+			rows[i] = cells
+		}
+		markup["inline_keyboard"] = rows
+	}
+	return c.call(ctx, "editMessageReplyMarkup", map[string]any{"chat_id": chatID, "message_id": messageID, "reply_markup": markup}, nil)
+}
+
+func (c *Client) SendButtons(ctx context.Context, chatID, threadID int64, text string, keyboard [][]agent.InlineButton) (int64, error) {
+	rows := make([][]map[string]any, len(keyboard))
+	for i, row := range keyboard {
+		cells := make([]map[string]any, len(row))
+		for j, btn := range row {
+			cells[j] = map[string]any{"text": btn.Text, "callback_data": btn.CallbackData}
+		}
+		rows[i] = cells
+	}
+	body := map[string]any{
+		"chat_id":      chatID,
+		"text":         markdownToTelegramHTML(text),
+		"parse_mode":   "HTML",
+		"reply_markup": map[string]any{"inline_keyboard": rows},
+	}
+	if threadID > 0 {
+		body["message_thread_id"] = threadID
+	}
+	var m Message
+	if err := c.call(ctx, "sendMessage", body, &m); err != nil {
+		return 0, err
+	}
+	if m.ID <= 0 {
+		return 0, errors.New("Telegram returned no message ID")
+	}
+	return m.ID, nil
+}
+
 func (c *Client) Updates(ctx context.Context, offset int64) ([]Update, error) {
 	var updates []Update
-	err := c.call(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": 25, "limit": 100, "allowed_updates": []string{"message", "channel_post", "edited_message", "edited_channel_post", "message_reaction", "message_reaction_count"}}, &updates)
+	err := c.call(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": 25, "limit": 100, "allowed_updates": []string{"message", "channel_post", "edited_message", "edited_channel_post", "message_reaction", "message_reaction_count", "callback_query"}}, &updates)
 	return updates, err
 }
 

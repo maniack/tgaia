@@ -51,6 +51,8 @@ func poll(ctx context.Context, db *storage.Database, agentID string, bot config.
 					log.Warn("Telegram reaction persistence failed", "bot_id", bot.ID)
 					break
 				}
+			} else if cb, ok := callbackFromUpdate(update, agentID, bot.ID, []config.Bot{bot}); ok {
+				handleCallback(ctx, client, agentID, bot.ID, cb, db, log)
 			} else if incoming, ok := telegram.Incoming(update, agentID, bot.ID, bot.Username); ok {
 				if err := db.Agent().Accept(ctx, incoming); err != nil {
 					log.Warn("Telegram update persistence failed", "bot_id", bot.ID)

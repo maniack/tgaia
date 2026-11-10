@@ -16,13 +16,22 @@ import (
 // Terminal tools end a run. Their descriptions say what the call does, like
 // any tool contract; how and when the bot answers is up to its prompt.
 const (
-	toolReply = "reply"
-	toolSkip  = "skip"
+	toolReply      = "reply"
+	toolSkip       = "skip"
+	toolUserChoice = "user_choice"
 )
 
+// UserChoiceArgs holds the parsed arguments of a user_choice terminal call.
+type UserChoiceArgs struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
+	Multi    bool     `json:"multi"`
+}
+
 var (
-	replyTool = llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolReply, Description: "Send your answer to the current event to the chat and end the turn. The text is delivered exactly as written.", Parameters: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string","description":"The complete message for the chat."}},"required":["text"]}`)}}
-	skipTool  = llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolSkip, Description: "End the turn without sending anything. Offered only when the current message is not addressed to you.", Parameters: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{}}`)}}
+	replyTool      = llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolReply, Description: "Send your answer to the current event to the chat and end the turn. The text is delivered exactly as written.", Parameters: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string","description":"The complete message for the chat."}},"required":["text"]}`)}}
+	skipTool       = llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolSkip, Description: "End the turn without sending anything. Offered only when the current message is not addressed to you.", Parameters: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{}}`)}}
+	userChoiceTool = llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolUserChoice, Description: "Ask the user to choose from a list of options you define, using Telegram inline buttons. Calling this ends your turn — the user's selection triggers the next turn. Use only when the user asked for a choice or when narrowing their intent requires a pick. Include enough context in the question that the user knows what they're answering. Never call this for yes/no questions — just ask in text.", Parameters: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"question":{"type":"string","maxLength":500,"description":"Question shown above the buttons."},"options":{"type":"array","items":{"type":"string","maxLength":100},"minItems":1,"maxItems":10,"description":"Button labels."},"multi":{"type":"boolean","description":"true = multi-select with a Done button; false = single-select."}},"required":["question","options","multi"]}`)}}
 )
 
 // systemPrompt is the single prompt of a bot: its own text from the database,
@@ -137,6 +146,17 @@ func replyOf(r turnResult) (Response, error) {
 	switch {
 	case r.Name == toolSkip:
 		return Response{Skip: true}, nil
+	case r.Name == toolUserChoice:
+		var args UserChoiceArgs
+		if json.Unmarshal([]byte(r.Arguments), &args) != nil || len(args.Options) == 0 || len(args.Options) > 10 || strings.TrimSpace(args.Question) == "" {
+			return Response{}, errors.New("invalid user_choice arguments")
+		}
+		for _, opt := range args.Options {
+			if strings.TrimSpace(opt) == "" || len([]rune(opt)) > 100 {
+				return Response{}, errors.New("invalid user_choice option")
+			}
+		}
+		return Response{UserChoice: &args}, nil
 	case r.Name == toolReply:
 		var args struct {
 			Text string `json:"text"`

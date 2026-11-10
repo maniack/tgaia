@@ -614,6 +614,35 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Persistence unavailable", 503)
 			return
 		}
+	} else if cq := update.CallbackQuery; cq != nil && cq.Message != nil {
+		cb := agent.Callback{
+			QueryID:   cq.ID,
+			Data:      cq.Data,
+			UserID:    cq.From.ID,
+			Username:  cq.From.Username,
+			ChatID:    cq.Message.Chat.ID,
+			MessageID: cq.Message.ID,
+		}
+		client := telegram.New(bot.Token)
+		result, err := s.DB.Agent().AcceptCallback(r.Context(), s.Config.AgentID, id, cb)
+		if err == nil && result.Action != "ignore" {
+			toast := result.Toast
+			if toast == "" && result.Action == "expired" {
+				toast = "This question has expired."
+			}
+			_ = client.AnswerCallbackQuery(r.Context(), cb.QueryID, toast)
+			switch result.Action {
+			case "toggle":
+				if result.Session != nil {
+					keyboard := agent.BuildChoiceKeyboard(result.Session.ID, result.Session.Options, result.Session.Multi, result.Session.Selected)
+					_ = client.EditMessageReplyMarkup(r.Context(), result.Session.ChatID, result.Session.MessageID, keyboard)
+				}
+			case "done", "expired":
+				if result.Session != nil {
+					_ = client.EditMessageReplyMarkup(r.Context(), result.Session.ChatID, result.Session.MessageID, nil)
+				}
+			}
+		}
 	} else if incoming, ok := telegram.Incoming(update, s.Config.AgentID, id, bot.Username); ok {
 		if err := s.DB.Agent().Accept(r.Context(), incoming); err != nil {
 			http.Error(w, "Persistence unavailable", 503)

@@ -55,7 +55,7 @@ func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=31").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=32").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -587,6 +587,7 @@ func (a *AgentStore) SimilarExplicitMemory(ctx context.Context, scope chat.Scope
 	}
 	return best, bestScore, nil
 }
+
 // SaveSummary persists a new compaction summary and returns the new
 // compaction_count for this chat (monotonically incremented on each save).
 func (a *AgentStore) SaveSummary(ctx context.Context, job queue.Job, previous, through int64, content string, revision ...int64) (int64, error) {
@@ -961,4 +962,265 @@ func (a *AgentStore) UpdateExplicitMemory(ctx context.Context, job queue.Job, so
 		return nil
 	})
 	return updated, err
+}
+
+type choiceSessionRow struct {
+	ID            int64  `gorm:"column:id"`
+	AgentID       string `gorm:"column:agent_id"`
+	BotID         int64  `gorm:"column:bot_id"`
+	ChatID        int64  `gorm:"column:chat_id"`
+	ThreadID      int64  `gorm:"column:thread_id"`
+	UserID        int64  `gorm:"column:user_id"`
+	MessageID     int64  `gorm:"column:message_id"`
+	Question      string `gorm:"column:question"`
+	Options       string `gorm:"column:options"`
+	Multi         int    `gorm:"column:multi"`
+	Selected      string `gorm:"column:selected"`
+	State         string `gorm:"column:state"`
+	ContextCursor int64  `gorm:"column:context_cursor"`
+	ExpiresAt     int64  `gorm:"column:expires_at"`
+}
+
+func rowToChoiceSession(r choiceSessionRow) *agent.ChoiceSession {
+	sess := &agent.ChoiceSession{
+		ID:            r.ID,
+		AgentID:       r.AgentID,
+		BotID:         r.BotID,
+		ChatID:        r.ChatID,
+		ThreadID:      r.ThreadID,
+		UserID:        r.UserID,
+		MessageID:     r.MessageID,
+		Question:      r.Question,
+		Multi:         r.Multi != 0,
+		State:         r.State,
+		ContextCursor: r.ContextCursor,
+		ExpiresAt:     r.ExpiresAt,
+	}
+	_ = json.Unmarshal([]byte(r.Options), &sess.Options)
+	_ = json.Unmarshal([]byte(r.Selected), &sess.Selected)
+	return sess
+}
+
+func (a *AgentStore) MaxConversationID(ctx context.Context, s chat.Scope) (int64, error) {
+	var id int64
+	err := memoryScoped(a.db.WithContext(ctx).Table("conversation_messages"), s).Select("COALESCE(MAX(id),0)").Scan(&id).Error
+	return id, err
+}
+
+func (a *AgentStore) CreateChoiceSession(ctx context.Context, sess agent.ChoiceSession) (int64, error) {
+	if sess.AgentID == "" || sess.BotID == 0 || sess.ChatID == 0 || sess.UserID == 0 || len(sess.Options) == 0 {
+		return 0, errors.New("invalid choice session")
+	}
+	optJSON, _ := json.Marshal(sess.Options)
+	now := time.Now().Unix()
+	expires := sess.ExpiresAt
+	if expires == 0 {
+		expires = now + 86400
+	}
+	row := map[string]any{
+		"agent_id":       sess.AgentID,
+		"bot_id":         sess.BotID,
+		"chat_id":        sess.ChatID,
+		"thread_id":      sess.ThreadID,
+		"user_id":        sess.UserID,
+		"message_id":     0,
+		"question":       sess.Question,
+		"options":        string(optJSON),
+		"multi":          boolToInt(sess.Multi),
+		"selected":       "[]",
+		"state":          "open",
+		"context_cursor": sess.ContextCursor,
+		"created_at":     now,
+		"expires_at":     expires,
+	}
+	res := a.db.WithContext(ctx).Table("choice_sessions").Create(row)
+	if res.Error != nil {
+		return 0, errors.New("creating choice session failed")
+	}
+	var id int64
+	a.db.WithContext(ctx).Table("choice_sessions").
+		Where("agent_id=? AND bot_id=? AND chat_id=? AND user_id=? AND created_at=?", sess.AgentID, sess.BotID, sess.ChatID, sess.UserID, now).
+		Select("id").Order("id DESC").Limit(1).Scan(&id)
+	return id, nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (a *AgentStore) SetChoiceMessageID(ctx context.Context, id, messageID int64) error {
+	return a.db.WithContext(ctx).Table("choice_sessions").Where("id=?", id).Update("message_id", messageID).Error
+}
+
+func (a *AgentStore) GetChoiceSession(ctx context.Context, id int64) (*agent.ChoiceSession, error) {
+	var row choiceSessionRow
+	err := a.db.WithContext(ctx).Table("choice_sessions").Where("id=?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.New("loading choice session failed")
+	}
+	return rowToChoiceSession(row), nil
+}
+
+func (a *AgentStore) DeleteChoiceSession(ctx context.Context, id int64) error {
+	return a.db.WithContext(ctx).Table("choice_sessions").Delete(nil, "id=?", id).Error
+}
+
+func (a *AgentStore) ExpiredChoiceSessions(ctx context.Context, limit int) ([]agent.ChoiceSession, error) {
+	var rows []choiceSessionRow
+	now := time.Now().Unix()
+	err := a.db.WithContext(ctx).Table("choice_sessions").
+		Where("state='open' AND expires_at<=? AND message_id>0", now).
+		Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, errors.New("loading expired sessions failed")
+	}
+	out := make([]agent.ChoiceSession, len(rows))
+	for i, r := range rows {
+		out[i] = *rowToChoiceSession(r)
+	}
+	return out, nil
+}
+
+func (a *AgentStore) AcceptCallback(ctx context.Context, agentID string, botID int64, cb agent.Callback) (agent.CallbackResult, error) {
+	ignore := agent.CallbackResult{Action: "ignore"}
+	if !strings.HasPrefix(cb.Data, "c:") {
+		return ignore, nil
+	}
+	rest := cb.Data[2:]
+	colon := strings.LastIndex(rest, ":")
+	if colon < 0 {
+		return ignore, nil
+	}
+	sessionIDStr := rest[:colon]
+	action := rest[colon+1:]
+	sessionID, err := parseInt64(sessionIDStr)
+	if err != nil || sessionID <= 0 {
+		return ignore, nil
+	}
+
+	var result agent.CallbackResult
+	txErr := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row choiceSessionRow
+		if err := tx.Table("choice_sessions").Where("id=?", sessionID).Take(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				result = ignore
+				return nil
+			}
+			return err
+		}
+		if row.AgentID != agentID || row.BotID != botID {
+			result = ignore
+			return nil
+		}
+		if row.State != "open" {
+			result = ignore
+			return nil
+		}
+		if time.Now().Unix() > row.ExpiresAt {
+			tx.Table("choice_sessions").Delete(nil, "id=?", sessionID)
+			result = agent.CallbackResult{Action: "expired", Session: rowToChoiceSession(row)}
+			return nil
+		}
+		if row.UserID != cb.UserID {
+			result = agent.CallbackResult{Action: "toast", Toast: "This question is not for you."}
+			return nil
+		}
+
+		var options []string
+		json.Unmarshal([]byte(row.Options), &options)
+		var selected []int
+		json.Unmarshal([]byte(row.Selected), &selected)
+		multi := row.Multi != 0
+
+		if action == "done" {
+			if !multi {
+				result = ignore
+				return nil
+			}
+			if len(selected) == 0 {
+				result = agent.CallbackResult{Action: "toast", Toast: "Select at least one option."}
+				return nil
+			}
+			if err := tx.Table("choice_sessions").Where("id=?", sessionID).Update("state", "done").Error; err != nil {
+				return err
+			}
+			scope := chat.Scope{AgentID: row.AgentID, BotID: row.BotID, ChatID: row.ChatID, ThreadID: row.ThreadID}
+			jobPayload, _ := json.Marshal(agent.JobPayload{ChoiceSessionID: sessionID, MessageID: row.MessageID})
+			_, enqErr := (&Database{orm: tx}).Queue().Enqueue(ctx, queue.Input{Scope: scope, ActorUserID: row.UserID, Key: fmt.Sprintf("choice:%d", sessionID), Kind: "respond", Payload: jobPayload, MaxAttempts: 3})
+			if enqErr != nil {
+				return enqErr
+			}
+			row.State = "done"
+			result = agent.CallbackResult{Action: "done", Session: rowToChoiceSession(row)}
+			return nil
+		}
+
+		idx, parseErr := parseInt(action)
+		if parseErr != nil || idx < 0 || idx >= len(options) {
+			result = ignore
+			return nil
+		}
+
+		if !multi {
+			sel, _ := json.Marshal([]int{idx})
+			if err := tx.Table("choice_sessions").Where("id=?", sessionID).Updates(map[string]any{"state": "done", "selected": string(sel)}).Error; err != nil {
+				return err
+			}
+			scope := chat.Scope{AgentID: row.AgentID, BotID: row.BotID, ChatID: row.ChatID, ThreadID: row.ThreadID}
+			jobPayload, _ := json.Marshal(agent.JobPayload{ChoiceSessionID: sessionID, MessageID: row.MessageID})
+			_, enqErr := (&Database{orm: tx}).Queue().Enqueue(ctx, queue.Input{Scope: scope, ActorUserID: row.UserID, Key: fmt.Sprintf("choice:%d", sessionID), Kind: "respond", Payload: jobPayload, MaxAttempts: 3})
+			if enqErr != nil {
+				return enqErr
+			}
+			row.Selected = string(sel)
+			row.State = "done"
+			result = agent.CallbackResult{Action: "done", Session: rowToChoiceSession(row)}
+			return nil
+		}
+
+		// Multi-select: toggle
+		newSel := toggleIndex(selected, idx)
+		selJSON, _ := json.Marshal(newSel)
+		if err := tx.Table("choice_sessions").Where("id=?", sessionID).Update("selected", string(selJSON)).Error; err != nil {
+			return err
+		}
+		row.Selected = string(selJSON)
+		result = agent.CallbackResult{Action: "toggle", Session: rowToChoiceSession(row)}
+		return nil
+	})
+	return result, txErr
+}
+
+func toggleIndex(selected []int, idx int) []int {
+	for i, v := range selected {
+		if v == idx {
+			return append(selected[:i], selected[i+1:]...)
+		}
+	}
+	return append(selected, idx)
+}
+
+func parseInt64(s string) (int64, error) {
+	var n int64
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, errors.New("not a number")
+		}
+		n = n*10 + int64(c-'0')
+	}
+	if s == "" {
+		return 0, errors.New("empty")
+	}
+	return n, nil
+}
+
+func parseInt(s string) (int, error) {
+	v, err := parseInt64(s)
+	return int(v), err
 }

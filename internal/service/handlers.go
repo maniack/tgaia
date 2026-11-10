@@ -40,17 +40,17 @@ type BotIdentity struct {
 	ProfileRefreshedAt                                  time.Time
 }
 type Engine struct {
-	Config            config.App
-	Identities        map[int64]BotIdentity
-	Now               func() time.Time
-	DefaultPromptFile    string
-	ReviewerPromptFile   string
-	Tools             ToolProvider
-	DB                *storage.Database
-	Model             Model
-	Embedder          MemoryEmbedder
-	Bots              map[int64]Sender
-	Log               *slog.Logger
+	Config             config.App
+	Identities         map[int64]BotIdentity
+	Now                func() time.Time
+	DefaultPromptFile  string
+	ReviewerPromptFile string
+	Tools              ToolProvider
+	DB                 *storage.Database
+	Model              Model
+	Embedder           MemoryEmbedder
+	Bots               map[int64]Sender
+	Log                *slog.Logger
 }
 
 func (e *Engine) log() *slog.Logger {
@@ -87,8 +87,9 @@ func (e *Engine) recordRunMetrics(ctx context.Context, r turnResult) {
 // (tasks, memory) happens through tools during the tool phase, so the final
 // call can only write text.
 type Response struct {
-	Reply string `json:"reply"`
-	Skip  bool   `json:"skip,omitempty"`
+	Reply      string          `json:"reply"`
+	Skip       bool            `json:"skip,omitempty"`
+	UserChoice *UserChoiceArgs `json:"-"` // in-memory only; not stored
 }
 
 // storedResult is the durable per-job outcome: the reply plus the scheduler's
@@ -97,7 +98,13 @@ type Response struct {
 type storedResult struct {
 	Reply         string   `json:"reply"`
 	Skip          bool     `json:"skip,omitempty"`
+	UserChoice    bool     `json:"user_choice,omitempty"`
 	Confirmations []string `json:"confirmations,omitempty"`
+}
+
+// ChoiceSender can send inline-keyboard messages and answer callbacks.
+type ChoiceSender interface {
+	SendButtons(ctx context.Context, chatID, threadID int64, text string, keyboard [][]agent.InlineButton) (int64, error)
 }
 
 func (r storedResult) text() string {
@@ -305,9 +312,33 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 	if stored == "" {
 		stopTyping := e.startTyping(ctx, job, sender)
 		defer stopTyping()
-		history, requestedAt, err := store.ReplyContext(ctx, job.Scope, payload.MessageID, e.Config.Limit("reply_messages"))
-		if err != nil {
-			return err
+		var history agent.Context
+		var requestedAt time.Time
+		var choiceSessionID int64
+		if payload.ChoiceSessionID > 0 {
+			sess, sessErr := store.GetChoiceSession(ctx, payload.ChoiceSessionID)
+			if sessErr != nil {
+				return sessErr
+			}
+			if sess == nil {
+				// Session already consumed (concurrent job or retry); nothing to do.
+				return nil
+			}
+			history, err = store.Context(ctx, job.Scope, sess.ContextCursor, e.Config.Limit("reply_messages"))
+			if err != nil {
+				return err
+			}
+			history.Messages = append(history.Messages,
+				agent.Message{Role: "assistant", Text: agent.ChoiceAssistantText(sess)},
+				agent.Message{Role: "user", Text: agent.ChoiceUserText(sess), UserID: job.ActorUserID},
+			)
+			requestedAt = time.Now()
+			choiceSessionID = payload.ChoiceSessionID
+		} else {
+			history, requestedAt, err = store.ReplyContext(ctx, job.Scope, payload.MessageID, e.Config.Limit("reply_messages"))
+			if err != nil {
+				return err
+			}
 		}
 		if err := e.enrichMedia(ctx, job, &history, sender); err != nil {
 			return err
@@ -374,6 +405,10 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 			if t.session != nil {
 				defer t.session.Close()
 			}
+			// Offer user_choice when the bot can send inline keyboards.
+			if _, ok := e.Bots[job.Scope.BotID].(ChoiceSender); ok && payload.ChoiceSessionID == 0 {
+				t.terminal = append(t.terminal, userChoiceTool)
+			}
 		}
 		outcome, err := e.run(runCtx, t)
 		if err != nil {
@@ -389,22 +424,64 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 			// Silence must not hide a task the scheduler just stored.
 			response.Skip = false
 		}
-		data, _ := json.Marshal(storedResult{Reply: response.Reply, Skip: response.Skip, Confirmations: outcome.Confirmations})
-		stored = string(data)
-		stopTyping()
-		if err := store.SaveResult(ctx, job, stored); err != nil {
-			return err
+		if response.UserChoice != nil {
+			// LLM chose to ask the user a question via inline buttons.
+			choiceSender := e.Bots[job.Scope.BotID].(ChoiceSender)
+			cursor, cursorErr := store.MaxConversationID(ctx, job.Scope)
+			if cursorErr != nil {
+				return cursorErr
+			}
+			sess := agent.ChoiceSession{
+				AgentID: job.Scope.AgentID, BotID: job.Scope.BotID,
+				ChatID: job.Scope.ChatID, ThreadID: job.Scope.ThreadID,
+				UserID:        job.ActorUserID,
+				Question:      response.UserChoice.Question,
+				Options:       response.UserChoice.Options,
+				Multi:         response.UserChoice.Multi,
+				ContextCursor: cursor,
+			}
+			sessID, createErr := store.CreateChoiceSession(ctx, sess)
+			if createErr != nil {
+				return createErr
+			}
+			keyboard := agent.BuildChoiceKeyboard(sessID, response.UserChoice.Options, response.UserChoice.Multi, nil)
+			msgID, sendErr := choiceSender.SendButtons(runCtx, job.Scope.ChatID, job.Scope.ThreadID, response.UserChoice.Question, keyboard)
+			if sendErr != nil {
+				_ = store.DeleteChoiceSession(ctx, sessID)
+				return sendErr
+			}
+			_ = store.SetChoiceMessageID(ctx, sessID, msgID)
+			data, _ := json.Marshal(storedResult{UserChoice: true})
+			stored = string(data)
+			stopTyping()
+			if err := store.SaveResult(ctx, job, stored); err != nil {
+				return err
+			}
+		} else {
+			data, _ := json.Marshal(storedResult{Reply: response.Reply, Skip: response.Skip, Confirmations: outcome.Confirmations})
+			stored = string(data)
+			stopTyping()
+			if err := store.SaveResult(ctx, job, stored); err != nil {
+				return err
+			}
+		}
+		if choiceSessionID > 0 {
+			_ = store.DeleteChoiceSession(ctx, choiceSessionID)
 		}
 	}
 	var result storedResult
-	if err := json.Unmarshal([]byte(stored), &result); err != nil || (!result.Skip && result.Reply == "" && len(result.Confirmations) == 0) {
+	if err := json.Unmarshal([]byte(stored), &result); err != nil || (!result.Skip && !result.UserChoice && result.Reply == "" && len(result.Confirmations) == 0) {
 		return errors.New("invalid stored result")
 	}
-	if result.Skip {
+	if result.Skip || result.UserChoice {
+		terminal := "skip"
+		if result.UserChoice {
+			terminal = "user_choice"
+		}
 		e.log().Info("job finished",
 			"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
 			"chat_id", job.Scope.ChatID, "attempt", job.Attempt,
-			"status", "completed", "terminal", "skip",
+			"status", "completed", "terminal", terminal,
 			"rounds", runMeta.Rounds, "tool_calls", runMeta.ToolCalls, "denied_calls", runMeta.DeniedCalls,
 			"duration_ms", time.Since(start).Milliseconds(),
 		)

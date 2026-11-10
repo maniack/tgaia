@@ -244,6 +244,53 @@ type JobPayload struct {
 	IntervalMS int64  `json:"interval_ms,omitempty"`
 	ThroughID  int64  `json:"through_id"`
 	MessageID  int64  `json:"message_id"`
+	// ChoiceSessionID is set on respond jobs created by user_choice callbacks.
+	// When non-zero, Respond injects the choice context instead of loading
+	// normal reply history.
+	ChoiceSessionID int64 `json:"choice_session_id,omitempty"`
+}
+
+// InlineButton is one cell in a Telegram inline keyboard.
+type InlineButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data"`
+}
+
+// ChoiceSession is a pending user_choice question waiting for a button tap.
+type ChoiceSession struct {
+	ID            int64
+	AgentID       string
+	BotID         int64
+	ChatID        int64
+	ThreadID      int64
+	UserID        int64
+	MessageID     int64
+	Question      string
+	Options       []string
+	Multi         bool
+	Selected      []int
+	State         string // "open" | "done" | "expired"
+	ContextCursor int64
+	ExpiresAt     int64 // unix seconds
+}
+
+// Callback carries the parsed fields of a Telegram callback_query update.
+type Callback struct {
+	QueryID   string
+	Data      string
+	UserID    int64
+	Username  string
+	ChatID    int64
+	MessageID int64
+}
+
+// CallbackResult is what AcceptCallback returns to the app layer.
+type CallbackResult struct {
+	// Action is one of "ignore", "toast", "toggle", "done", "expired".
+	Action string
+	Toast  string
+	// Session is the updated session (populated for toggle/done/expired).
+	Session *ChoiceSession
 }
 
 // Correction is a behaviour change for one bot in one chat, proposed by the

@@ -537,8 +537,9 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 			})
 			workers = startGroup(ctx, func(ctx context.Context) {
 				var wg sync.WaitGroup
-				wg.Add(1)
+				wg.Add(2)
 				go func() { defer wg.Done(); schedule(ctx, r) }()
+				go func() { defer wg.Done(); sweepChoices(ctx, r) }()
 				r.monitor.WorkerRunning.Store(true)
 				if err := worker.Run(ctx); err != nil {
 					select {
