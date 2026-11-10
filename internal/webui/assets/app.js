@@ -89,11 +89,11 @@ function restoreScroll(element,top){const behavior=element.style.scrollBehavior;
 function captureScrollState(){const elements=new Map();for(const item of document.querySelectorAll('[id]'))if(item.scrollTop||item.scrollLeft)elements.set(item.id,{top:item.scrollTop,left:item.scrollLeft});return{elements,x:window.scrollX,y:window.scrollY,atBottom:window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-24}}
 function restoreScrollState(state){for(const [id,position]of state.elements){const item=$(id);if(!item)continue;const behavior=item.style.scrollBehavior;item.style.scrollBehavior='auto';item.scrollTop=position.top;item.scrollLeft=position.left;item.style.scrollBehavior=behavior}requestAnimationFrame(()=>window.scrollTo({left:state.x,top:state.atBottom?document.documentElement.scrollHeight:state.y,behavior:'auto'}))}
 
-const titles={audit:['Operations','Administrative changes and rejected attempts.'],conversations:['Conversations','Messages, delivery state and memory in one place.'],outgoing:['Operations','Message delivery and retired queue jobs.'],outcomes:['Operations','External tool calls and their confirmed or uncertain results.'],tasks:['Scheduled tasks','Review prompts, timing and ownership across the agent.'],people:['People & access','User blocks apply across every bot and chat of the agent.'],knowledge:['Memory','See exactly what is carried into future conversations.'],skills:['Skills & files','Agent-written capabilities and their isolated database storage.'],status:['Status','Health, activity and functional readiness.'],mcp:['Settings','Connections and tool access for each bot.'],settings:['Settings','Runtime values and integrations.']};
-const navGroup=name=>['outgoing','outcomes','audit'].includes(name)?'outgoing':name==='mcp'?'settings':name;
+const titles={audit:['Operations','Administrative changes and rejected attempts.'],conversations:['Conversations','Messages, delivery state and memory in one place.'],outgoing:['Operations','Message delivery and retired queue jobs.'],outcomes:['Operations','External tool calls and their confirmed or uncertain results.'],tasks:['Scheduled tasks','Review prompts, timing and ownership across the agent.'],people:['People & access','User blocks apply across every bot and chat of the agent.'],knowledge:['Memory','See exactly what is carried into future conversations.'],skills:['Skills & files','Agent-written capabilities and their isolated database storage.'],status:['Status','Health, activity and functional readiness.'],mcp:['Settings','Connections and tool access for each bot.'],settings:['Settings','Runtime values and integrations.'],jobs:['Operations','All queue jobs with status and payload details.']};
+const navGroup=name=>['outgoing','outcomes','audit','jobs'].includes(name)?'outgoing':name==='mcp'?'settings':name;
 let activeTabName='';
 function savedTab(){const hash=location.hash.slice(1);if(titles[hash])return hash;try{const saved=localStorage.getItem('active-tab');if(titles[saved])return saved}catch{}return'conversations'}
-function tab(name){if(!titles[name])name='conversations';activeTabName=name;try{localStorage.setItem('active-tab',name)}catch{}document.body.classList.remove('chat-open');document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==name);document.querySelectorAll('[data-tab]').forEach(e=>{const active=e.dataset.tab===name;e.classList.toggle('selected',active);if(e.closest('nav'))e.setAttribute('aria-current',active?'page':'false')});document.querySelectorAll('nav.primary button[data-tab]').forEach(e=>e.classList.toggle('selected',e.dataset.tab===navGroup(name)));$('more-nav').classList.toggle('selected',['skills','outgoing','outcomes','audit','settings','mcp'].includes(name));[$('heading').textContent,$('subtitle').textContent]=titles[name];document.title=`${titles[name][0]} · tgaia`;if(location.hash!=='#'+name)history.replaceState(null,'',name==='conversations'?location.pathname:'#'+name);window.scrollTo({top:0});if(name==='mcp')act(loadMCP)();if(name==='settings'){act(loadSettings)();act(loadBotPrompt)();act(loadChatBehavior)()}if(name==='knowledge'){act(loadMemory)();act(loadKnowledge)()}if(name==='skills')act(loadSkills)();if(name==='status')act(loadStatus)()}
+function tab(name){if(!titles[name])name='conversations';activeTabName=name;try{localStorage.setItem('active-tab',name)}catch{}document.body.classList.remove('chat-open');document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==name);document.querySelectorAll('[data-tab]').forEach(e=>{const active=e.dataset.tab===name;e.classList.toggle('selected',active);if(e.closest('nav'))e.setAttribute('aria-current',active?'page':'false')});document.querySelectorAll('nav.primary button[data-tab]').forEach(e=>e.classList.toggle('selected',e.dataset.tab===navGroup(name)));$('more-nav').classList.toggle('selected',['skills','outgoing','outcomes','audit','jobs','settings','mcp'].includes(name));[$('heading').textContent,$('subtitle').textContent]=titles[name];document.title=`${titles[name][0]} · tgaia`;if(location.hash!=='#'+name)history.replaceState(null,'',name==='conversations'?location.pathname:'#'+name);window.scrollTo({top:0});if(name==='mcp')act(loadMCP)();if(name==='settings'){act(loadSettings)();act(loadBotPrompt)();act(loadChatBehavior)()}if(name==='knowledge'){act(loadMemory)();act(loadKnowledge)()}if(name==='skills')act(loadSkills)();if(name==='status')act(loadStatus)();if(name==='jobs')act(loadJobs)()}
 function renderMode(){const modes=[['oidc',snapshot.mock_oidc,'Mock OIDC','OIDC'],['telegram',snapshot.mock_telegram,'Local Telegram','Telegram'],['llm',snapshot.mock_llm,'Mock LLM','LLM']];reconcile($('mode'),modes.map(([key,mock,text,live])=>keyed(element('span',mock?text:live,'pill'+(mock?' mock':'')),'mode/'+key,{mock,text,live})))}
 let refreshPromise=null;
 function refresh(){
@@ -110,6 +110,7 @@ async function refreshVisible(){
  else if(requestedTab==='knowledge')await loadMemory();
  else if(requestedTab==='skills')await ($('skills-files-panel').hidden?loadSkills():loadVFS());
  else if(requestedTab==='settings')await runtimeStatus();
+ else if(requestedTab==='jobs')await loadJobs();
  else return refresh();
  if(activeTabName!==requestedTab)return;
  restoreOpenDetails(open);restoreScrollState(scroll);
@@ -153,6 +154,44 @@ const failureLabel=item=>failureLabels[item?.failure_class]||item?.failure_class
 function renderDead(items){const nodes=items.map(item=>{const row=element('tr'),job=element('div',`Job ${item.id}`);job.append(element('small',`${item.kind} · ${failureLabel(item)}`));cell(row,job);cell(row,`${item.agent_id} · bot ${item.bot_id} · chat ${item.chat_id}${item.thread_id?' · topic '+item.thread_id:''}`);cell(row,`${item.attempts} of ${item.max_attempts}`);cell(row,item.updated_at?fmtTime(Number(item.updated_at)):'');cell(row,actionMenu('Job actions',[{label:'Replay job',action:async()=>{if(await confirmAsync(`Replay job ${item.id}?`,'Completed tool calls and cached results are reused. Only unfinished work runs again.','Replay')){await api('/api/queue-replay','POST',{job_id:item.id});notice('Job queued for replay.');await refresh()}}}]));return keyed(row,`job/${item.id}`,item)});reconcile($('dead-jobs'),nodes,'No retired jobs.',5)}
 function renderDeliveries(items){const nodes=items.map(item=>{const row=element('tr'),chat=(snapshot.data.chats||[]).find(c=>String(c.bot_id)===String(item.bot_id)&&String(c.chat_id)===String(item.chat_id));cell(row,chat?.title||`Chat ${item.chat_id}`);const text=compactText(item.text);if(item.message_id)text.append(element('small',`Telegram message ${item.message_id}`));cell(row,text);const actions=element('div',undefined,'actions');actions.append(badge(deliveryState(item),!item.resolution&&item.state!=='sent'));const menu=deliveryMenu(item);if(menu)actions.append(menu);cell(row,actions);return keyed(row,`delivery/${item.job_id}/${item.part}`,{item,chat:chat?.title})});reconcile($('deliveries'),nodes,'No outgoing messages yet.',3)}
 
+const jobKindLabels={respond:'Respond',compact:'Compact',review_behavior:'Behavior review',message_action:'Message action',media:'Media',failure_notice:'Failure notice'};
+function jobDescription(item){
+ try{const p=typeof item.payload==='string'?JSON.parse(item.payload):(item.payload||{});
+  if(item.kind==='compact')return`Memory compaction through message #${p.through_id}`;
+  if(item.kind==='review_behavior')return'Behavior review for compaction';
+  if(item.kind==='respond'&&p.task_id)return`Scheduled task: ${p.task_id}`;
+  if(item.kind==='respond'&&p.prompt){const t=String(p.prompt);return t.length>80?t.slice(0,80)+'…':t}
+  if(item.kind==='message_action')return`${p.action==='edit'?'Edit':'Delete'} message #${p.message_id}`;
+  if(item.kind==='media')return`Describe media for message #${p.message_id}`;
+  if(item.kind==='failure_notice')return'Failure notification';
+ }catch{}
+ return jobKindLabels[item.kind]||item.kind;
+}
+function renderJobs(items){
+ const kind=$('jobs-kind').value,status=$('jobs-status').value;
+ const filtered=items.filter(i=>(!kind||i.kind===kind)&&(!status||i.status===status));
+ const nodes=filtered.map(item=>{
+  const row=element('tr');
+  const jobCell=element('div',`Job ${item.id}`);jobCell.append(element('small',jobKindLabels[item.kind]||item.kind));cell(row,jobCell);
+  cell(row,`${item.agent_id} · bot ${item.bot_id} · chat ${item.chat_id}${item.thread_id?' · topic '+item.thread_id:''}`);
+  cell(row,badge(item.status,item.status==='dead'||item.status==='retry'));
+  const desc=element('div',jobDescription(item));
+  if(item.failure_class)desc.append(element('small',failureLabel(item)));
+  if(item.payload)desc.append(detailBlock('Payload',item.payload));
+  cell(row,desc);
+  cell(row,item.created_at?fmtTime(Number(item.created_at)):'');
+  const acts=item.status==='dead'?[{label:'Replay job',action:async()=>{if(await confirmAsync(`Replay job ${item.id}?`,'Completed steps are reused; only unfinished work runs again.','Replay')){await api('/api/queue-replay','POST',{job_id:item.id});notice('Job queued for replay.');await loadJobs()}}}]:[];
+  cell(row,acts.length?actionMenu('Job actions',acts):'');
+  return keyed(row,`job/${item.id}`,{id:item.id,status:item.status,attempts:item.attempts,failure_class:item.failure_class||'',updated_at:item.updated_at});
+ });
+ reconcile($('jobs-list'),nodes,filtered.length===0&&(kind||status)?'No jobs match the filter.':'No jobs yet.',6);
+}
+async function loadJobs(){
+ await fetchList('jobs');
+ renderJobs(snapshot.data.jobs||[]);
+ pager('jobs',$('jobs-list').closest('.table-scroll'));
+ labelTables();
+}
 // Settings are grouped by key prefix into inset lists; Save appears once a value changes.
 const settingGroups={agent_id:'General',log_level:'General',bots:'Bots',limits:'Limits',llm:'Language model',memory:'Memory',observability:'Observability',telegram:'Telegram',quotas:'Quotas'};
 const groupOf=name=>settingGroups[name]||settingGroups[name.split('.')[0]]||'Other';
@@ -264,7 +303,7 @@ $('resolution-form').onsubmit=act(async()=>{
 });
 function renderAudit(){const nodes=(snapshot.data.audit||[]).map(a=>{const row=element('tr'),when=element('div',fmtTime(a.created_at));when.append(element('small',a.subject));cell(row,when);const label=String(a.operation||'Change').replaceAll('_',' '),op=element('div',label.charAt(0).toUpperCase()+label.slice(1));op.append(badge(a.status<400?'Completed':`Failed · ${a.status}`,a.status>=400));cell(row,op);const details=element('details',undefined,'technical'),content=element('div',undefined,'audit-details');details.dataset.auditId=String(a.id);content.append(detailBlock('Request',a.request),detailBlock('Before',a.before_state),detailBlock('After',a.after_state));details.append(element('summary','Review details'),content);cell(row,details);return keyed(row,`audit/${a.id}`,a)});reconcile($('audit-list'),nodes,'No administrative changes recorded yet.',3)}
 function labelTables(){document.querySelectorAll('table').forEach(table=>{const labels=Array.from(table.querySelectorAll('thead th')).map(th=>th.textContent.trim());table.querySelectorAll('tbody tr').forEach(row=>Array.from(row.cells).forEach((td,index)=>td.dataset.label=labels[index]||''))})}
-function renderPaged(){render();renderAudit();pager('audit',$('audit-list').closest('.table-scroll'));renderTools(snapshot.data.tools||[]);pager('chats',$('chat-list'));pager('bots',$('demo-bot').closest('.form-group'));pager('tasks',$('task-list').closest('.table-scroll'));pager('users',$('user-list').closest('.table-scroll'));pager('deliveries',$('deliveries').closest('.table-scroll'));pager('tools',$('tool-outcomes').closest('.table-scroll'));labelTables()}
+function renderPaged(){render();renderAudit();pager('audit',$('audit-list').closest('.table-scroll'));renderTools(snapshot.data.tools||[]);pager('chats',$('chat-list'));pager('bots',$('demo-bot').closest('.form-group'));pager('tasks',$('task-list').closest('.table-scroll'));pager('users',$('user-list').closest('.table-scroll'));pager('deliveries',$('deliveries').closest('.table-scroll'));pager('tools',$('tool-outcomes').closest('.table-scroll'));renderJobs(snapshot.data.jobs||[]);pager('jobs',$('jobs-list').closest('.table-scroll'));labelTables()}
 
 let historyCursor='',historyNext='',historyStack=[];
 function renderHistoryPager(){
@@ -320,3 +359,5 @@ $('skills-catalog-tab').onclick=()=>showSkillSection(false);$('skills-files-tab'
 $('settings-scope').onchange=act(loadSettings);
 
 $('mcp-scope').onchange=act(async()=>{sheet('mcp-sheet',false);await loadMCP()});
+$('jobs-kind').onchange=()=>{if(snapshot)renderJobs(snapshot.data.jobs||[])};
+$('jobs-status').onchange=()=>{if(snapshot)renderJobs(snapshot.data.jobs||[])};

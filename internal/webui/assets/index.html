@@ -116,7 +116,7 @@
 </section>
 
 <section id="outgoing" class="view" hidden>
-  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="audit">Audit log</button></nav>
+  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="jobs">Jobs</button><button data-tab="audit">Audit log</button></nav>
   <div>
     <div class="section-head"><h2>Message delivery</h2></div>
     <p class="section-lead">Every Telegram send with its delivery state. Resolve a sending or uncertain part only after checking the chat.</p>
@@ -131,7 +131,7 @@
 </section>
 
 <section id="outcomes" class="view" hidden>
-  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="audit">Audit log</button></nav>
+  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="jobs">Jobs</button><button data-tab="audit">Audit log</button></nav>
   <div>
     <div class="section-head"><h2>Tool outcomes</h2></div>
     <p class="section-lead">Resolve unknown outcomes only after checking the external system. Calls are never retried automatically.</p>
@@ -147,11 +147,20 @@
 </section>
 
 <section id="audit" class="view" hidden>
-  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="audit">Audit log</button></nav>
+  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="jobs">Jobs</button><button data-tab="audit">Audit log</button></nav>
   <div>
     <div class="section-head"><h2>Administrative audit</h2></div>
     <p class="section-lead">Successful changes are committed with their audit record. Credentials are redacted.</p>
     <div class="table-scroll"><table><thead><tr><th>Time / group</th><th>Operation / status</th><th>Changes</th></tr></thead><tbody id="audit-list"></tbody></table></div>
+  </div>
+</section>
+
+<section id="jobs" class="view" hidden>
+  <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="jobs">Jobs</button><button data-tab="audit">Audit log</button></nav>
+  <div>
+    <div class="section-head"><h2>Queue jobs</h2><div class="controls"><label>Kind <span class="select"><select id="jobs-kind"><option value="">All kinds</option><option value="respond">Respond</option><option value="compact">Compact</option><option value="review_behavior">Behavior review</option><option value="message_action">Message action</option><option value="media">Media</option><option value="failure_notice">Failure notice</option></select></span></label><label>Status <span class="select"><select id="jobs-status"><option value="">All statuses</option><option value="pending">Pending</option><option value="leased">Running</option><option value="retry">Retry</option><option value="completed">Completed</option><option value="dead">Dead</option></select></span></label></div></div>
+    <p class="section-lead">All queue jobs across every kind, newest first. Payload and failure details expand inline. Filters apply to the current page.</p>
+    <div class="table-scroll"><table><thead><tr><th>Job</th><th>Scope</th><th>Status</th><th>Details</th><th>Created</th><th></th></tr></thead><tbody id="jobs-list"></tbody></table></div>
   </div>
 </section>
 
