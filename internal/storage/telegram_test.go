@@ -200,6 +200,35 @@ func TestConversationBehaviorAndBotSenders(t *testing.T) {
 	}
 }
 
+func TestNoOpEditDoesNotInvalidateInFlightResponse(t *testing.T) {
+	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
+		t.Run(string(driver), func(t *testing.T) {
+			db, _ := databasesAtVersion(t, driver, 30)
+			ctx := context.Background()
+			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 0}
+			in := agent.Incoming{Scope: scope, UserID: 7, UpdateID: 83574217, MessageID: 46919, Text: "hello", SentAt: time.Now(), Respond: true}
+			if err := db.Agent().Accept(ctx, in); err != nil {
+				t.Fatal(err)
+			}
+			// Telegram resends edited_message for link-preview with same text: must not update update_id.
+			noOp := in
+			noOp.Edited = true
+			noOp.UpdateID = 83574221
+			if err := db.Agent().Accept(ctx, noOp); err != nil {
+				t.Fatal(err)
+			}
+			// The in-flight respond job was scheduled with source_update_id=83574217; it must still be current.
+			current, err := db.Agent().ResponseCurrent(ctx, scope, in.MessageID, in.UpdateID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !current {
+				t.Fatal("no-op edit invalidated in-flight response: ResponseCurrent returned false")
+			}
+		})
+	}
+}
+
 func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
