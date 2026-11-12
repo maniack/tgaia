@@ -279,6 +279,11 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		return err
 	}
 	if !current {
+		e.log().Info("reply skipped: message revision changed before LLM start",
+			"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+			"chat_id", job.Scope.ChatID, "message_id", payload.MessageID,
+			"source_update_id", payload.SourceUpdateID,
+		)
 		return nil
 	}
 	var prior []storage.ReplyLink
@@ -543,6 +548,11 @@ func (e *Engine) deliver(ctx context.Context, job queue.Job, payload agent.JobPa
 			return false, err
 		}
 		if !current {
+			e.log().Warn("reply dropped: message revision changed during delivery",
+				"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+				"chat_id", job.Scope.ChatID, "message_id", payload.MessageID,
+				"source_update_id", payload.SourceUpdateID, "part", part,
+			)
 			return false, nil
 		}
 		if rewrite && !replaceAll && !item.document {
@@ -651,6 +661,11 @@ func (e *Engine) deliver(ctx context.Context, job queue.Job, payload agent.JobPa
 					return false, err
 				}
 				if !current {
+					e.log().Warn("reply dropped: message revision changed during rewrite cleanup",
+						"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+						"chat_id", job.Scope.ChatID, "message_id", payload.MessageID,
+						"source_update_id", payload.SourceUpdateID,
+					)
 					return false, nil
 				}
 				action, _ := json.Marshal(agent.JobPayload{Action: "delete", MessageID: ref.MessageID})

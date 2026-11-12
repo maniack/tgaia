@@ -145,9 +145,9 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 			}
 			if old.Text == in.Text && old.Attachments == string(attachments) {
 				// Telegram re-sends edited_message for link-preview and similar
-				// changes. Nothing the model sees changed: record the revision and
-				// neither invalidate memory nor generate a new reply.
-				return tx.Exec("UPDATE conversation_messages SET update_id=? WHERE id=?", in.UpdateID, old.ID).Error
+				// changes. Nothing the model sees changed: skip without touching
+				// update_id so any in-flight respond job is not invalidated.
+				return nil
 			}
 			if err := tx.Exec("UPDATE conversation_messages SET text=?,attachments=?,media_text='',update_id=?,reply_to_message_id=? WHERE id=?", in.Text, string(attachments), in.UpdateID, in.ReplyMessageID, old.ID).Error; err != nil {
 				return err
