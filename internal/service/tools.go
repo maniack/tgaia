@@ -78,8 +78,8 @@ func unfinished(phase string) error {
 //     offered, so the model can do nothing but finish;
 //   - a turn cut off by the token limit is retried without thinking;
 //   - plain text instead of a call is kept as a draft and the model is asked
-//     once more with terminal tools only; if it still does not call one, the
-//     draft is the result.
+//     once more with terminal tools only; if it still does not call one, a
+//     plain completion over the assembled context is used as the reply.
 func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 	model, ok := e.Model.(toolModel)
 	if !ok {
@@ -139,7 +139,6 @@ func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 		if !final {
 			offered = append(append([]llm.Tool(nil), t.actions...), t.terminal...)
 		}
-		terminalOnly := final && len(t.actions) > 0 // forced into terminal-only after real tool use
 		key := fmt.Sprintf("turn:%d", round)
 		phase := fmt.Sprintf("tool_turn:%d", round)
 		var message llm.Message
@@ -163,9 +162,7 @@ func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 				return result, queue.WithPhase(err, phase)
 			}
 			var err error
-			// On terminal-only rounds thinking is wasteful: the only valid output is
-			// a single tool call, which needs no reasoning budget.
-			callNoThinking := noThinking || terminalOnly
+			callNoThinking := noThinking
 			message, err = model.CompleteTools(e.callContext(ctx, t, callNoThinking), input, offered)
 			if truncated(err) && !noThinking {
 				// Reasoning ate the output budget; a call needs far less.
@@ -226,16 +223,19 @@ func (e *Engine) run(ctx context.Context, t turn) (result turnResult, _ error) {
 			if draft == "" {
 				return result, unfinished(phase)
 			}
-			// draft is a working note, not a user-facing answer. Fall back to a plain
-			// completion over the assembled context so the model writes a proper reply.
+			// draft is a working note, not a user-facing answer. Run a plain
+			// completion over the assembled context so the model writes a proper
+			// reply. Never deliver the draft: it was written for the bot's own
+			// reasoning, not for the user.
 			if err := e.reserveModel(ctx, t.job, t.compaction); err != nil {
 				return result, queue.WithPhase(err, phase)
 			}
 			text2, err := e.Model.Complete(e.callContext(ctx, t, true), input)
-			if err != nil || strings.TrimSpace(text2) == "" {
-				// Completion failed; deliver the draft rather than nothing.
-				result.Prose = draft
-				return result, nil
+			if err != nil {
+				return result, queue.WithPhase(err, phase)
+			}
+			if strings.TrimSpace(text2) == "" {
+				return result, unfinished(phase)
 			}
 			result.Prose = strings.TrimSpace(text2)
 			return result, nil

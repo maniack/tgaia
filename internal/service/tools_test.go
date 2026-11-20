@@ -202,3 +202,65 @@ func TestReActThinkingToolLoop(t *testing.T) {
 		t.Fatalf("terminal reply = %+v %v", reply, err)
 	}
 }
+
+// proseFixture simulates a provider that ignores tool_choice: it calls the
+// action tool on the first round, then always returns prose instead of a
+// terminal call. Complete returns the proper reply text.
+type proseFixture struct {
+	turns        int
+	completes    int
+	workingNote  string
+	completeText string
+}
+
+func (f *proseFixture) Open(context.Context, chat.Scope) (mcpclient.Session, error) { return f, nil }
+func (f *proseFixture) Tools() []llm.Tool {
+	return []llm.Tool{{Type: "function", Function: llm.ToolFunction{Name: "search"}}}
+}
+func (f *proseFixture) Validate(_, _ string) error    { return nil }
+func (f *proseFixture) Call(_ context.Context, _, _ string) (string, error) {
+	return `{"result":"some data"}`, nil
+}
+func (f *proseFixture) Close() {}
+func (f *proseFixture) Complete(_ context.Context, _ []llm.Message) (string, error) {
+	f.completes++
+	return f.completeText, nil
+}
+func (f *proseFixture) CompleteTools(_ context.Context, _ []llm.Message, _ []llm.Tool) (llm.Message, error) {
+	f.turns++
+	if f.turns == 1 {
+		return llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "c1", Type: "function", Function: llm.ToolFunction{Name: "search", Arguments: `{}`}}}}, nil
+	}
+	return llm.Message{Role: "assistant", Content: f.workingNote}, nil
+}
+
+// TestWorkingNoteNotDeliveredAsAnswer verifies R6: when the model calls a tool
+// then returns prose (working note) instead of a terminal call, the prose must
+// never reach the user. The delivered text must come from Model.Complete over
+// the assembled context, not from the working note itself.
+func TestWorkingNoteNotDeliveredAsAnswer(t *testing.T) {
+	e, _, _, scope := engineFixture(t)
+	f := &proseFixture{
+		workingNote:  "The search results show something interesting...",
+		completeText: "Here is the proper answer.",
+	}
+	e.Tools = f
+	e.Model = f
+	accept(t, e, scope, 1, "search something", true)
+	job := take(t, e, "respond")
+	ctx := context.Background()
+	request := []llm.Message{{Role: "system", Content: "test"}, {Role: "user", Content: "search something"}}
+	outcome, err := runTools(ctx, e, *job, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Prose == f.workingNote {
+		t.Error("working note was delivered as answer; expected text from Model.Complete")
+	}
+	if outcome.Prose != f.completeText {
+		t.Errorf("expected complete answer %q, got %q", f.completeText, outcome.Prose)
+	}
+	if f.completes == 0 {
+		t.Error("Model.Complete was never called; working note may have been delivered instead")
+	}
+}
