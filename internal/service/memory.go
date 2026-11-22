@@ -24,7 +24,7 @@ const (
 
 func summaryTool(limit int) llm.Tool {
 	params := fmt.Sprintf(`{"type":"object","additionalProperties":false,"properties":{
-"summary":{"type":"string","maxLength":%d,"description":"Summary of the events and facts from the current memory together with the new messages. Replaces the current memory. Write in the same language the chat participants use. Record past events with their date (e.g. '2026-11-10: alert fired'), not as current states ('alert is active'). Explicit memory instructions from users must be stored as directives to yourself in imperative form ('Reply only in Russian'), not as descriptions of the user ('user wants Russian')."}},
+"summary":{"type":"string","maxLength":%d,"description":"Updated long-term memory of this chat. Copy every dated event line from ## Current memory into this summary unchanged, then append new events from ## New messages. Never drop or merge existing dated entries — historical record must be cumulative. Write in the same language the chat participants use. Record events with their date (e.g. '2026-11-10: alert fired'), not as current states ('alert is active'). Explicit memory instructions from users must be stored as directives to yourself in imperative form ('Reply only in Russian'), not as descriptions of the user ('user wants Russian')."}},
 "required":["summary"]}`, limit)
 	return llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolSummary, Description: "Save the updated long-term memory of this chat and end the turn.", Parameters: json.RawMessage(params)}}
 }

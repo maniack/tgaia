@@ -785,6 +785,10 @@ func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
 		"Write the summary in the same language the chat participants use. " +
 		"Record past events with their date (e.g. '2026-11-10: alert fired'), not as current states. " +
 		"Store explicit instructions from users as directives to yourself in imperative form.\n"
+	if e.Config.MemoryRetention > 0 {
+		cutoff := time.Now().Add(-e.Config.MemoryRetention).Format("2006-01-02")
+		compactionEvent += fmt.Sprintf("Memory retention: drop all dated events from the summary that are dated before %s. Keep all directive lines regardless of their age.\n", cutoff)
+	}
 	outcome, err := e.run(ctx, turn{job: job, messages: []llm.Message{{Role: "system", Content: system + e.runtimeContext(job.Scope.BotID)}, {Role: "user", Content: text + corrections + compactionEvent}}, terminal: []llm.Tool{summaryTool(e.Config.Limit("compaction_summary_chars"))}, compaction: true, budget: e.Config.Limit("compaction_output_tokens"), thinking: &noThinking})
 	if err != nil {
 		return queue.WithPhase(err, "compact")

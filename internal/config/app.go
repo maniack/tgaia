@@ -42,6 +42,7 @@ type App struct {
 	EmbeddingModel        string
 	MemoryWindow          time.Duration
 	MemoryInterval        time.Duration
+	MemoryRetention       time.Duration // 0 = unlimited
 }
 type Bot struct {
 	DisplayName   string // Resolved by getMe; not a configuration setting.
@@ -94,6 +95,7 @@ type appSchema struct {
 		EmbeddingModel string `yaml:"embedding_model"`
 		Window         string `yaml:"window"`
 		Interval       string `yaml:"interval"`
+		Retention      string `yaml:"retention"`
 	} `yaml:"memory"`
 }
 
@@ -135,6 +137,10 @@ func (f *File) App() (App, error) {
 	c.MemoryInterval, err = time.ParseDuration(get("memory.interval", "TGAIA_MEMORY_INTERVAL", "30s"))
 	if err != nil {
 		return c, errors.New("invalid memory.interval")
+	}
+	c.MemoryRetention, err = time.ParseDuration(get("memory.retention", "TGAIA_MEMORY_RETENTION", "720h"))
+	if err != nil {
+		return c, errors.New("invalid memory.retention")
 	}
 	if f.app != nil {
 		c.Limits = f.app.Limits
@@ -229,6 +235,9 @@ func (c App) Validate() error {
 	}
 	if c.MemoryWindow < time.Second || c.MemoryInterval < time.Second {
 		return errors.New("memory durations must be at least 1s")
+	}
+	if c.MemoryRetention != 0 && c.MemoryRetention < time.Hour {
+		return errors.New("memory.retention must be 0 (unlimited) or at least 1h")
 	}
 	for _, bot := range c.Bots {
 		if c.TelegramMode == "mock" {
