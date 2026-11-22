@@ -18,11 +18,11 @@ var reviewSeq atomic.Int64
 
 // summaryModel handles both compaction and reviewer calls:
 //   - compaction: responds to memory_save_summary with a plain summary
-//   - review: responds to review_done with the given corrections
+//   - review: responds to review_done with the given operations
 type summaryModel struct {
-	corrections string   // JSON array for review_done
-	systems     []string // recorded system prompts
-	inputs      []string // recorded user messages
+	operations string   // JSON array of ReviewOperation for review_done
+	systems    []string // recorded system prompts
+	inputs     []string // recorded user messages
 }
 
 func (m *summaryModel) Complete(context.Context, []llm.Message) (string, error) { return "", nil }
@@ -34,7 +34,7 @@ func (m *summaryModel) CompleteTools(_ context.Context, in []llm.Message, specs 
 			return call("s", toolSummary, `{"summary":"memory"}`), nil
 		}
 		if spec.Function.Name == toolReviewDone {
-			args, _ := json.Marshal(map[string]any{"corrections": json.RawMessage(m.corrections)})
+			args, _ := json.Marshal(map[string]any{"operations": json.RawMessage(m.operations)})
 			return call("r", toolReviewDone, string(args)), nil
 		}
 	}
@@ -76,7 +76,7 @@ func reviewOnce(t *testing.T, e *Engine, scope queue.Scope) {
 func TestCompactionProposesCorrectionsForReview(t *testing.T) {
 	e, _, _, scope := engineFixture(t)
 	ctx := context.Background()
-	m := &summaryModel{corrections: `[{"text":"Не утверждай, что проверил, без результата tool","reason":"Ада дважды поправила"}]`}
+	m := &summaryModel{operations: `[{"action":"add","text":"Не утверждай, что проверил, без результата tool","reason":"Ада дважды поправила"}]`}
 	e.Model = m
 	for i := int64(1); i <= 30; i++ {
 		accept(t, e, scope, i, "сообщение", false)
@@ -116,7 +116,7 @@ func TestCompactionProposesCorrectionsForReview(t *testing.T) {
 func TestDisabledCorrectionIsNotProposedAgainAndAutoApprove(t *testing.T) {
 	e, _, _, scope := engineFixture(t)
 	ctx := context.Background()
-	m := &summaryModel{corrections: `[{"text":"Отвечай короче","reason":"просили"}]`}
+	m := &summaryModel{operations: `[{"action":"add","text":"Отвечай короче","reason":"просили"}]`}
 	e.Model = m
 	for i := int64(1); i <= 30; i++ {
 		accept(t, e, scope, i, "сообщение", false)
@@ -132,14 +132,14 @@ func TestDisabledCorrectionIsNotProposedAgainAndAutoApprove(t *testing.T) {
 	if err := e.DB.Agent().SetChatBehavior(ctx, b); err != nil {
 		t.Fatal(err)
 	}
-	m.corrections = `[{"text":"отвечай короче","reason":"снова"},{"text":"Пиши по-русски","reason":"чат русский"}]`
+	m.operations = `[{"action":"add","text":"отвечай короче","reason":"снова"},{"action":"add","text":"Пиши по-русски","reason":"чат русский"}]`
 	for i := int64(31); i <= 60; i++ {
 		accept(t, e, scope, i, "сообщение", false)
 	}
 	compactOnce(t, e)
 	// Reviewer sees existing corrections (including disabled ones).
 	reviewOnce(t, e, scope)
-	if !strings.Contains(m.inputs[len(m.inputs)-1], "- [disabled] Отвечай короче") {
+	if !strings.Contains(m.inputs[len(m.inputs)-1], "[disabled] Отвечай короче") {
 		t.Fatal("review does not see existing corrections")
 	}
 	list, _ = e.DB.Agent().Corrections(ctx, scope, "")

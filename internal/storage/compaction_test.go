@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -106,6 +107,37 @@ func TestCompactionBatchingAndScopeDedup(t *testing.T) {
 	db3.orm.Table("queue_jobs").Where("kind='compact'").Count(&n)
 	if n != 1 {
 		t.Fatal("default policy must compact a single aged message")
+	}
+}
+
+// When the pending backlog exceeds MaxUncompact and no messages have aged past
+// the time window, Tick must still enqueue one compaction that covers all but
+// the last MinMessages messages (count-based through_id, not time-based).
+func TestForcedCompactionUsesCountBasedThroughID(t *testing.T) {
+	db, _ := databasesAtVersion(t, config.SQLite, 33)
+	ctx := context.Background()
+	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
+	for id := int64(1); id <= 8; id++ {
+		if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: id, MessageID: id, Text: "m", SentAt: time.Now().Add(-time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy := CompactionPolicy{MinMessages: 3, MaxUncompact: 5}
+	if err := db.Agent().Tick(ctx, time.Hour, policy); err != nil {
+		t.Fatal(err)
+	}
+	var jobs []struct{ Payload string }
+	db.orm.Table("queue_jobs").Where("kind='compact'").Select("payload").Find(&jobs)
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 compact job, got %d", len(jobs))
+	}
+	var jp agent.JobPayload
+	if err := json.Unmarshal([]byte(jobs[0].Payload), &jp); err != nil {
+		t.Fatal(err)
+	}
+	// pending=8, MinMessages=3: compact 8-3=5 messages, through_id=id of 5th message=5.
+	if jp.ThroughID != 5 {
+		t.Fatalf("expected count-based through_id=5 (8-3 messages), got %d", jp.ThroughID)
 	}
 }
 

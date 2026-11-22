@@ -185,6 +185,25 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
 			return err
 		}
 		for _, s := range scopes {
+			// When the pending backlog exceeds MaxUncompact, use a count-based
+			// through_id so we compact most messages at once instead of dripping
+			// one tiny batch per tick (which happens when only a few messages
+			// have aged past the time window).
+			if policy.MaxUncompact > 0 && int(s.Pending) > policy.MaxUncompact {
+				keep := policy.MinMessages
+				if keep <= 0 {
+					keep = 1
+				}
+				if offset := int(s.Pending) - keep - 1; offset >= 0 {
+					var newThrough int64
+					tx.Raw(`SELECT id FROM conversation_messages WHERE agent_id=? AND bot_id=? AND chat_id=? AND id>? ORDER BY id ASC LIMIT 1 OFFSET ?`,
+						s.AgentID, s.BotID, s.ChatID, s.FromID, offset).Scan(&newThrough)
+					if newThrough > 0 && newThrough > s.ThroughID {
+						s.ThroughID = newThrough
+						s.Eligible = int64(int(s.Pending) - keep)
+					}
+				}
+			}
 			if s.Eligible == 0 || s.ThroughID == 0 {
 				continue
 			}

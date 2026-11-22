@@ -149,22 +149,25 @@ func (r *runtime) loadBotIdentity(ctx context.Context, cfg config.App, model ser
 		}
 		return profile, identity, nil
 	}
+	// BotPrompt is a cheap DB read; run it synchronously while the ctx is live.
+	// The LLM call itself runs in a goroutine so it cannot exhaust prepareCtx
+	// and block bot registration that follows.
 	system, err := service.BotPrompt(ctx, r.db, cfg.AgentID, profile.ID, cfg.DefaultPromptFile, cfg.Limit("system_prompt_bytes"))
 	if err == nil {
-		// Use an independent context so a slow LLM doesn't exhaust the prepareCtx
-		// deadline and prevent bot registration from completing afterwards.
-		llmCtx, llmCancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer llmCancel()
-		identity.AvatarDescription, err = describeBotAvatar(llmCtx, model, system, identity, data, mime)
-		if err == nil && identity.AvatarDescription != "" {
-			_ = r.db.Bots().SaveAvatarCache(ctx, cfg.AgentID, profile.ID, identity.AvatarUniqueID, identity.AvatarDescription)
-		}
-	}
-	if err != nil {
-		if r.log != nil {
-			r.log.Warn("bot avatar transcription failed", "bot_id", profile.ID)
-		}
-		identity.AvatarDescription = ""
+		agentID, botID, uid := cfg.AgentID, profile.ID, identity.AvatarUniqueID
+		snap := identity
+		go func() {
+			llmCtx, llmCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer llmCancel()
+			desc, descErr := describeBotAvatar(llmCtx, model, system, snap, data, mime)
+			if descErr != nil {
+				if r.log != nil {
+					r.log.Warn("bot avatar transcription failed", "bot_id", botID)
+				}
+				return
+			}
+			_ = r.db.Bots().SaveAvatarCache(context.Background(), agentID, botID, uid, desc)
+		}()
 	}
 	return profile, identity, nil
 }

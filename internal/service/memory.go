@@ -36,23 +36,26 @@ const toolReviewDone = "review_done"
 var reviewTool = llm.Tool{Type: "function", Function: llm.ToolFunction{Name: toolReviewDone,
 	Description: "Submit the behaviour review result and end the turn.",
 	Parameters: json.RawMessage(fmt.Sprintf(`{"type":"object","additionalProperties":false,"properties":{
-"corrections":{"type":"array","maxItems":5,"description":"New behaviour corrections to propose. Empty when no new corrections are warranted.","items":{"type":"object","additionalProperties":false,"properties":{
-"text":{"type":"string","maxLength":%d,"description":"Short imperative rule the bot should adopt, e.g. 'Reply only in Russian to this user'."},
-"reason":{"type":"string","maxLength":%d,"description":"Evidence from the conversation that justifies this correction."}},"required":["text","reason"]}}},
-"required":["corrections"]}`, storage.CorrectionTextLimit, storage.CorrectionTextLimit)),
+"operations":{"type":"array","maxItems":8,"description":"Operations to apply to the behaviour correction list. Use 'add' for new rules; use 'replace', 'merge', or 'remove' to consolidate when the list is near its 10-rule limit.","items":{"type":"object","additionalProperties":false,"properties":{
+"action":{"type":"string","enum":["add","replace","merge","remove"],"description":"'add': propose a new rule; 'replace': update the rule with the given id; 'merge': replace the rules at the given ids with one consolidated rule; 'remove': disable the rule at the given id"},
+"id":{"type":"integer","description":"Target rule ID (required for replace/remove)"},
+"ids":{"type":"array","items":{"type":"integer"},"description":"Rule IDs to merge into one (required for merge, at least 2)"},
+"text":{"type":"string","maxLength":%d,"description":"New rule text, short imperative (required for add/replace/merge), e.g. 'Reply only in Russian to this user'"},
+"reason":{"type":"string","maxLength":%d,"description":"Evidence from the conversation that justifies this operation"}},"required":["action","reason"]}}},
+"required":["operations"]}`, storage.CorrectionTextLimit, storage.CorrectionTextLimit)),
 }}
 
-func reviewOf(r turnResult) ([]agent.Correction, error) {
+func reviewOf(r turnResult) ([]agent.ReviewOperation, error) {
 	if r.Name != toolReviewDone {
 		return nil, errors.New("reviewer did not call review_done")
 	}
 	var args struct {
-		Corrections []agent.Correction `json:"corrections"`
+		Operations []agent.ReviewOperation `json:"operations"`
 	}
 	if json.Unmarshal([]byte(r.Arguments), &args) != nil {
 		return nil, errors.New("reviewer returned invalid arguments")
 	}
-	return args.Corrections, nil
+	return args.Operations, nil
 }
 
 func summaryOf(r turnResult) (string, error) {
@@ -84,8 +87,8 @@ func describedText(r turnResult) string {
 	return strings.TrimSpace(r.Prose)
 }
 
-func (e *Engine) proposeCorrections(ctx context.Context, job queue.Job, proposals []agent.Correction) error {
-	return e.DB.Agent().ProposeCorrections(ctx, job.Scope, proposals)
+func (e *Engine) proposeCorrections(ctx context.Context, job queue.Job, ops []agent.ReviewOperation) error {
+	return e.DB.Agent().ApplyReviewOperations(ctx, job.Scope, ops)
 }
 
 // correctionsContext lists a chat's corrections as data. The reply run sees
@@ -104,7 +107,7 @@ func (e *Engine) correctionsContext(ctx context.Context, scope chat.Scope, all b
 	out.WriteString("\n## Behaviour corrections\n")
 	for _, c := range list {
 		if all {
-			fmt.Fprintf(&out, "- [%s] %s\n", c.Status, c.Text)
+			fmt.Fprintf(&out, "#%d [%s] %s\n", c.ID, c.Status, c.Text)
 		} else {
 			fmt.Fprintf(&out, "- %s\n", c.Text)
 		}

@@ -293,6 +293,16 @@ type CallbackResult struct {
 	Session *ChoiceSession
 }
 
+// ReviewOperation is one instruction from the behaviour reviewer.
+// Action is one of "add", "replace", "merge", "remove".
+type ReviewOperation struct {
+	Action string  `json:"action"`
+	ID     int64   `json:"id,omitempty"`
+	IDs    []int64 `json:"ids,omitempty"`
+	Text   string  `json:"text,omitempty"`
+	Reason string  `json:"reason"`
+}
+
 // Correction is a behaviour change for one bot in one chat, proposed by the
 // bot itself during memory compaction. Only approved corrections reach the
 // bot's context; an operator approves them or enables auto-approval.
