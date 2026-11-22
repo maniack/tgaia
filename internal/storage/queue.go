@@ -58,12 +58,12 @@ func (q *Queue) Enqueue(ctx context.Context, in queue.Input) (bool, error) {
 			availAt = "?"
 			availAtArg = in.AvailableAt
 		}
-		args := []any{in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Scope.ThreadID, in.SenderChatID, in.ActorUserID, in.Key, in.Kind, string(in.Payload), in.MaxAttempts}
+		args := []any{in.Scope.AgentID, in.Scope.BotID, in.Scope.ChatID, in.Scope.ThreadID, in.SenderChatID, in.ActorUserID, in.Key, in.Kind, string(in.Payload), in.MaxAttempts, in.Priority}
 		if availAtArg != nil {
 			args = append(args, availAtArg)
 		}
-		result := tx.Exec(`INSERT INTO queue_jobs (agent_id,bot_id,chat_id,thread_id,sender_chat_id,actor_user_id,dedupe_key,kind,payload,status,max_attempts,available_at,created_at,updated_at)
- VALUES (?,?,?,?,?,?,?,?,?,'pending',?,`+availAt+`,`+q.now+`,`+q.now+`) ON CONFLICT (agent_id,bot_id,chat_id,dedupe_key) DO NOTHING`, args...)
+		result := tx.Exec(`INSERT INTO queue_jobs (agent_id,bot_id,chat_id,thread_id,sender_chat_id,actor_user_id,dedupe_key,kind,payload,status,max_attempts,priority,available_at,created_at,updated_at)
+ VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?,`+availAt+`,`+q.now+`,`+q.now+`) ON CONFLICT (agent_id,bot_id,chat_id,dedupe_key) DO NOTHING`, args...)
 		applied = result.RowsAffected == 1
 		return result.Error
 	})
@@ -155,8 +155,8 @@ func (q *Queue) Claim(ctx context.Context, kinds []string, lease time.Duration) 
  WHERE j.bot_id>0 AND j.kind IN ?
  AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE b.agent_id=j.agent_id AND b.user_id=j.actor_user_id) AND j.attempts<j.max_attempts
  AND ((j.status IN ('pending','retry') AND j.available_at<=` + q.now + `) OR (j.status='leased' AND j.lease_until<=` + q.now + `))
- AND NOT EXISTS (SELECT 1 FROM queue_jobs earlier WHERE earlier.agent_id=j.agent_id AND earlier.bot_id=j.bot_id AND earlier.chat_id=j.chat_id AND earlier.id<j.id AND earlier.status IN ('pending','leased','retry'))
- ORDER BY j.id LIMIT 1` + q.locking + `) RETURNING id,agent_id,bot_id,chat_id,thread_id,sender_chat_id,actor_user_id,kind,payload,attempts,max_attempts,lease_token`
+ AND NOT EXISTS (SELECT 1 FROM queue_jobs earlier WHERE earlier.agent_id=j.agent_id AND earlier.bot_id=j.bot_id AND earlier.chat_id=j.chat_id AND earlier.id<j.id AND earlier.priority<=j.priority AND earlier.status IN ('pending','leased','retry'))
+ ORDER BY j.priority ASC, j.id LIMIT 1` + q.locking + `) RETURNING id,agent_id,bot_id,chat_id,thread_id,sender_chat_id,actor_user_id,kind,payload,attempts,max_attempts,lease_token`
 	var row claimedJob
 	result := q.db.WithContext(ctx).Raw(query, token, lease.Milliseconds(), kinds).Scan(&row)
 	if result.Error != nil {

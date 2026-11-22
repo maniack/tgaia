@@ -20,6 +20,11 @@ type Input struct {
 	Payload      []byte
 	MaxAttempts  int
 	AvailableAt  int64 // Unix milliseconds; zero means now.
+	// Priority controls per-scope dispatch order. Lower values are served first.
+	// 0 = human/system (default); 1 = background tasks. A higher-priority job
+	// can be claimed even if lower-priority jobs in the same scope are pending
+	// or leased, allowing human messages to bypass a running task backlog.
+	Priority int
 }
 type Receipt struct {
 	ID    int64

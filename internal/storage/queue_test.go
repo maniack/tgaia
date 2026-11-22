@@ -20,7 +20,7 @@ import (
 )
 
 func queueDatabases(t *testing.T, driver config.Driver) (*Database, *Database) {
-	return databasesAtVersion(t, driver, 29)
+	return databasesAtVersion(t, driver, 34)
 }
 func databasesAtVersion(t *testing.T, driver config.Driver, version int) (*Database, *Database) {
 	t.Helper()
@@ -360,5 +360,44 @@ func registerTestBots(t *testing.T, db *Database) {
 		if _, err := db.Bots().Register(context.Background(), bot.agent, bot.id, "TEST_TOKEN"); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// A human respond job (priority=0) must be claimable even when an earlier
+// task respond job (priority=1) is leased in the same scope.
+func TestQueuePriorityHumanBypassesTask(t *testing.T) {
+	db, _ := queueDatabases(t, config.SQLite)
+	ctx := context.Background()
+	registerTestBots(t, db)
+	scope := queue.Scope{AgentID: "test", BotID: 1, ChatID: 100}
+
+	// Enqueue task job first (lower ID, priority=1).
+	if _, err := db.Queue().Enqueue(ctx, queue.Input{
+		Scope: scope, ActorUserID: 7, Key: "task:t1:1:0", Kind: "respond",
+		Payload: []byte(`{}`), MaxAttempts: 1, Priority: 1,
+	}); err != nil {
+		t.Fatal("enqueue task:", err)
+	}
+	// Claim the task job so it's leased (simulates it running).
+	taskJob, err := db.Queue().Claim(ctx, []string{"respond"}, time.Minute)
+	if err != nil || taskJob == nil {
+		t.Fatal("claim task:", err)
+	}
+
+	// Enqueue a human respond job (priority=0) while the task is leased.
+	if _, err := db.Queue().Enqueue(ctx, queue.Input{
+		Scope: scope, ActorUserID: 7, Key: "update:1", Kind: "respond",
+		Payload: []byte(`{}`), MaxAttempts: 1, Priority: 0,
+	}); err != nil {
+		t.Fatal("enqueue human:", err)
+	}
+
+	// The human job must be claimable immediately despite the leased task.
+	humanJob, err := db.Queue().Claim(ctx, []string{"respond"}, time.Minute)
+	if err != nil || humanJob == nil {
+		t.Fatalf("human job not claimable while task is leased: job=%v err=%v", humanJob, err)
+	}
+	if humanJob.ID == taskJob.ID {
+		t.Fatal("got the same task job instead of the human job")
 	}
 }

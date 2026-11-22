@@ -140,7 +140,7 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
 				}
 				if pending == 0 {
 					payload, _ := json.Marshal(agent.JobPayload{Prompt: task.Prompt, TaskID: task.ID, DueAt: task.RunAt, IntervalMS: task.IntervalMS})
-					if _, err := q.Enqueue(ctx, queue.Input{Scope: scope, ActorUserID: task.UserID, Key: fmt.Sprintf("task:%s:%d:%d", task.ID, task.Version, task.RunAt), Kind: "respond", Payload: payload, MaxAttempts: 3}); err != nil {
+					if _, err := q.Enqueue(ctx, queue.Input{Scope: scope, ActorUserID: task.UserID, Key: fmt.Sprintf("task:%s:%d:%d", task.ID, task.Version, task.RunAt), Kind: "respond", Payload: payload, MaxAttempts: 3, Priority: 1}); err != nil {
 						return err
 					}
 				}
