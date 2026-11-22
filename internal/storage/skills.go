@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"regexp"
 	"sort"
@@ -207,15 +208,25 @@ func (a *AgentStore) ListVirtualFiles(ctx context.Context, scope chat.Scope, use
 	return rows, nil
 }
 
-func (a *AgentStore) ApplyVirtualChanges(ctx context.Context, scope chat.Scope, userID int64, changes []VirtualFileChange) error {
+// ErrVFSQuota is returned when a write would exceed the per-namespace byte limit.
+var ErrVFSQuota = errors.New("virtual storage quota exceeded")
+
+// ApplyVirtualChanges writes or deletes virtual files in one transaction.
+// maxNamespaceBytes, when non-zero, enforces a total byte limit per namespace.
+func (a *AgentStore) ApplyVirtualChanges(ctx context.Context, scope chat.Scope, userID int64, changes []VirtualFileChange, maxNamespaceBytes ...int) error {
 	if len(changes) > 100 {
 		return errors.New("too many virtual file changes")
 	}
+	limit := 0
+	if len(maxNamespaceBytes) > 0 {
+		limit = maxNamespaceBytes[0]
+	}
 	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		modified := map[string]bool{}
 		for _, change := range changes {
 			ns, filePath, err := cleanVirtualPath(change.Path)
 			if err != nil || (ns == "user" && userID <= 0) {
-				return errors.New("invalid virtual file change")
+				return errors.New("invalid virtual file change: " + change.Path)
 			}
 			q := virtualScope(tx.Table("virtual_files"), scope, userID, ns).Where("path=?", filePath)
 			if change.Content == nil {
@@ -225,13 +236,28 @@ func (a *AgentStore) ApplyVirtualChanges(ctx context.Context, scope chat.Scope, 
 				continue
 			}
 			if len(*change.Content) > 256000 {
-				return errors.New("virtual file exceeds size limit")
+				return errors.New("virtual file exceeds the 256 KB limit: " + change.Path)
 			}
 			botID, chatID, scopedUser := virtualKeys(scope, userID, ns)
 			now := time.Now().UTC().UnixMilli()
 			row := map[string]any{"agent_id": scope.AgentID, "bot_id": botID, "chat_id": chatID, "user_id": scopedUser, "namespace": ns, "path": filePath, "content": *change.Content, "mime_type": "text/plain", "version": 1, "created_at": now, "updated_at": now}
 			if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "agent_id"}, {Name: "bot_id"}, {Name: "chat_id"}, {Name: "user_id"}, {Name: "namespace"}, {Name: "path"}}, DoUpdates: clause.Assignments(map[string]any{"content": *change.Content, "version": gorm.Expr("virtual_files.version+1"), "updated_at": now})}).Table("virtual_files").Create(row).Error; err != nil {
 				return err
+			}
+			modified[ns] = true
+		}
+		if limit > 0 {
+			for ns := range modified {
+				var row struct {
+					Bytes int64
+				}
+				if err := virtualScope(tx.Table("virtual_files"), scope, userID, ns).
+					Select("COALESCE(SUM(LENGTH(content)), 0) AS bytes").Scan(&row).Error; err != nil {
+					return err
+				}
+				if row.Bytes > int64(limit) {
+					return fmt.Errorf("%w: namespace %s uses %d bytes, limit is %d", ErrVFSQuota, ns, row.Bytes, limit)
+				}
 			}
 		}
 		return nil

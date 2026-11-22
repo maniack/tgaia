@@ -50,7 +50,7 @@ const (
 	toolVFSWrite       = "vfs_write"
 	toolVFSDelete      = "vfs_delete"
 	toolVFSStat        = "vfs_stat"
-	toolVFSQuota       = "vfs_quota"
+	toolVFSUsage       = "vfs_usage"
 )
 
 var whenSchema = `{"type":"object","additionalProperties":false,"properties":{
@@ -94,7 +94,7 @@ func (b *builtinTools) specs() []llm.Tool {
 		tool(toolVFSList, "List files in one virtual filesystem namespace scoped to the current user, chat or bot.", `{"type":"object","additionalProperties":false,"properties":{"namespace":{"type":"string","enum":["user","chat","bot"]},"prefix":{"type":"string","maxLength":512}},"required":["namespace","prefix"]}`),
 		tool(toolVFSRead, "Read a text file from /user, /chat or /bot virtual storage. This never accesses the host filesystem.", `{"type":"object","additionalProperties":false,"properties":{"path":{"type":"string","maxLength":512}},"required":["path"]}`),
 		tool(toolVFSStat, "Get the size, version and timestamps of a virtual file without reading its content. Use to check whether a file exists or when it was last updated.", `{"type":"object","additionalProperties":false,"properties":{"path":{"type":"string","maxLength":512}},"required":["path"]}`),
-		tool(toolVFSQuota, "Show file count and total bytes stored in each virtual filesystem namespace (user, chat, bot) for the current scope. Use to check available space before writing.", `{"type":"object","additionalProperties":false,"properties":{}}`),
+		tool(toolVFSUsage, "Show file count and bytes used in each virtual filesystem namespace (user, chat, bot), plus the per-namespace byte limit. Use to check available space before writing.", `{"type":"object","additionalProperties":false,"properties":{}}`),
 	}
 	if b.scheduled {
 		return tools
@@ -137,7 +137,7 @@ func (b *builtinTools) specs() []llm.Tool {
 // to a hidden one gets a specific refusal rather than an MCP lookup.
 func (b *builtinTools) handles(name string) bool {
 	switch name {
-	case toolTaskList, toolTaskCreate, toolTaskUpdate, toolTaskDelete, toolMemoryList, toolMemorySave, toolMemoryUpdate, toolMemoryDelete, toolMessageList, toolMessageSend, toolMessageEdit, toolMessageDelete, toolModerateDelete, toolModerateBan, toolModerateUnban, toolModerateMute, toolModeratePin, toolSkillList, toolSkillCreate, toolSkillUpdate, toolSkillTest, toolSkillRun, toolSkillDelete, toolVFSList, toolVFSRead, toolVFSWrite, toolVFSDelete, toolVFSStat, toolVFSQuota:
+	case toolTaskList, toolTaskCreate, toolTaskUpdate, toolTaskDelete, toolMemoryList, toolMemorySave, toolMemoryUpdate, toolMemoryDelete, toolMessageList, toolMessageSend, toolMessageEdit, toolMessageDelete, toolModerateDelete, toolModerateBan, toolModerateUnban, toolModerateMute, toolModeratePin, toolSkillList, toolSkillCreate, toolSkillUpdate, toolSkillTest, toolSkillRun, toolSkillDelete, toolVFSList, toolVFSRead, toolVFSWrite, toolVFSDelete, toolVFSStat, toolVFSUsage:
 		return true
 	}
 	return false
@@ -595,12 +595,12 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			return toolError("Virtual file not found: " + in.Path), nil
 		}
 		return toolResult(map[string]any{"stat": stat}), nil
-	case toolVFSQuota:
+	case toolVFSUsage:
 		usage, err := store.VirtualUsage(ctx, b.job.Scope, b.job.ActorUserID)
 		if err != nil {
 			return "", err
 		}
-		return toolResult(map[string]any{"usage": usage, "limit_bytes_per_file": 256000}), nil
+		return toolResult(map[string]any{"usage": usage, "limit_per_namespace_bytes": b.engine.Config.Limit("vfs_namespace_bytes"), "limit_per_file_bytes": 256000}), nil
 	case toolVFSWrite:
 		var in struct {
 			Path    string `json:"path"`
@@ -609,7 +609,10 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 		if json.Unmarshal([]byte(args), &in) != nil {
 			return toolError("path and content are required."), nil
 		}
-		if err := store.ApplyVirtualChanges(ctx, b.job.Scope, b.job.ActorUserID, []storage.VirtualFileChange{{Path: in.Path, Content: &in.Content}}); err != nil {
+		if err := store.ApplyVirtualChanges(ctx, b.job.Scope, b.job.ActorUserID, []storage.VirtualFileChange{{Path: in.Path, Content: &in.Content}}, b.engine.Config.Limit("vfs_namespace_bytes")); err != nil {
+			if errors.Is(err, storage.ErrVFSQuota) {
+				return toolError(err.Error() + ". Use vfs_usage to see current usage, then vfs_delete to free space."), nil
+			}
 			return toolError("Invalid path or content exceeds the 256 KB limit: " + in.Path), nil
 		}
 		return toolResult(map[string]any{"written": in.Path, "bytes": len(in.Content)}), nil
