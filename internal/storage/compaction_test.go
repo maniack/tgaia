@@ -108,3 +108,78 @@ func TestCompactionBatchingAndScopeDedup(t *testing.T) {
 		t.Fatal("default policy must compact a single aged message")
 	}
 }
+
+// Tick must not enqueue a second run for a recurring task while the previous
+// run is still pending or leased (coalesce/skip-if-behind).
+func TestTickCoalescesRecurringTask(t *testing.T) {
+	db, _ := databasesAtVersion(t, config.SQLite, 33)
+	ctx := context.Background()
+	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
+	if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "hi", SentAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	task := agent.Task{
+		ID: "task-coalesce-1", AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 0,
+		UserID: 7, Prompt: "ping", RunAt: time.Now().Add(-time.Minute).UnixMilli(),
+		IntervalMS: 60000, Active: true,
+	}
+	if err := db.Agent().PutTask(ctx, task, 0); err != nil {
+		t.Fatal(err)
+	}
+	// First tick: job is enqueued.
+	if err := db.Agent().Tick(ctx, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	db.orm.Table("queue_jobs").Where("kind='respond' AND dedupe_key LIKE 'task:%'").Count(&count)
+	if count != 1 {
+		t.Fatalf("expected 1 task job after first tick, got %d", count)
+	}
+	// Second tick: previous run still pending — must not enqueue another.
+	if err := db.Agent().Tick(ctx, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	db.orm.Table("queue_jobs").Where("kind='respond' AND dedupe_key LIKE 'task:%'").Count(&count)
+	if count != 1 {
+		t.Fatalf("coalesce failed: expected 1 task job, got %d", count)
+	}
+}
+
+// CancelTaskJobs moves pending task runs to dead/cancelled and does not touch
+// runs that are already leased or completed.
+func TestCancelTaskJobs(t *testing.T) {
+	db, _ := databasesAtVersion(t, config.SQLite, 33)
+	ctx := context.Background()
+	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
+	if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "hi", SentAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	task := agent.Task{
+		ID: "task-cancel-1", AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 0,
+		UserID: 7, Prompt: "ping", RunAt: time.Now().Add(-time.Minute).UnixMilli(),
+		IntervalMS: 60000, Active: true,
+	}
+	if err := db.Agent().PutTask(ctx, task, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Agent().Tick(ctx, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	var pending int64
+	db.orm.Table("queue_jobs").Where("kind='respond' AND dedupe_key LIKE 'task:%' AND status='pending'").Count(&pending)
+	if pending != 1 {
+		t.Fatalf("expected 1 pending task job before cancel, got %d", pending)
+	}
+	if err := db.Agent().CancelTaskJobs(ctx, "test", 1, 100, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	db.orm.Table("queue_jobs").Where("kind='respond' AND dedupe_key LIKE 'task:%' AND status='pending'").Count(&pending)
+	if pending != 0 {
+		t.Fatalf("pending task job not cancelled, still %d", pending)
+	}
+	var dead int64
+	db.orm.Table("queue_jobs").Where("kind='respond' AND dedupe_key LIKE 'task:%' AND status='dead' AND failure_class='cancelled'").Count(&dead)
+	if dead != 1 {
+		t.Fatalf("expected 1 dead/cancelled task job, got %d", dead)
+	}
+}

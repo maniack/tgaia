@@ -60,12 +60,13 @@ var whenSchema = `{"type":"object","additionalProperties":false,"properties":{
 "required":["date","weekday","time","timezone","delay_seconds"]}`
 
 type builtinTools struct {
-	engine     *Engine
-	job        queue.Job
-	payload    agent.JobPayload
-	now        time.Time
-	scheduled  bool // Running a due task: it must not create, edit or delete tasks or facts.
-	moderation map[string]bool
+	engine      *Engine
+	job         queue.Job
+	payload     agent.JobPayload
+	now         time.Time
+	scheduled   bool // Running a due task: it must not create, edit or delete tasks or facts.
+	moderation  map[string]bool
+	taskCreated int // number of task_create calls completed in this turn
 }
 
 type moderationSender interface {
@@ -261,6 +262,9 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 	}
 	switch name {
 	case toolTaskCreate:
+		if b.taskCreated > 0 {
+			return toolError("Only one task can be created per response. Create this task in a separate reply after confirming it with the user."), nil
+		}
 		var in struct {
 			Prompt   string `json:"prompt"`
 			When     When   `json:"when"`
@@ -283,6 +287,7 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			}
 			return "", err
 		}
+		b.taskCreated++
 		view := b.view(task, loc)
 		view.Confirmation = confirmation(view)
 		return toolResult(map[string]any{"created": view, "instruction": "Tell the user the first run exactly as in confirmation (date, weekday, time and timezone). Do not recompute it."}), nil
@@ -337,6 +342,9 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			}
 			return "", err
 		}
+		// Cancel any pending runs for the old task version; the next tick will
+		// enqueue a fresh run with the updated parameters.
+		_ = store.CancelTaskJobs(ctx, task.AgentID, task.BotID, task.ChatID, task.ID)
 		task.Version++
 		view := b.view(task, loc)
 		view.Confirmation = confirmation(view)
@@ -361,6 +369,9 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 		if err := store.DeleteTask(ctx, task.ID, task.Version); err != nil {
 			return "", err
 		}
+		// Cancel any pending runs; the task row is gone so the next tick won't
+		// re-enqueue, but already-queued jobs would otherwise still fire.
+		_ = store.CancelTaskJobs(ctx, task.AgentID, task.BotID, task.ChatID, task.ID)
 		return toolResult(map[string]any{"deleted": task.ID}), nil
 	case toolMemorySave:
 		var in struct {

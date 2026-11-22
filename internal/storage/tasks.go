@@ -88,6 +88,16 @@ func (a *AgentStore) DeleteTask(ctx context.Context, id string, version int64) e
 	return nil
 }
 
+// CancelTaskJobs moves pending/retry queue jobs for the given task to dead with
+// failure_class 'cancelled'. Called when a task is deleted or updated so stale
+// runs do not execute after the task has changed or been removed.
+func (a *AgentStore) CancelTaskJobs(ctx context.Context, agentID string, botID, chatID int64, taskID string) error {
+	q := (&Database{orm: a.db.WithContext(ctx)}).Queue()
+	return q.db.Exec(`UPDATE queue_jobs SET status='dead',failure_class='cancelled',lease_token='',lease_until=0,updated_at=`+q.now+`
+ WHERE agent_id=? AND bot_id=? AND chat_id=? AND dedupe_key LIKE ? AND status IN ('pending','retry')`,
+		agentID, botID, chatID, fmt.Sprintf("task:%s:%%", taskID)).Error
+}
+
 // CompactionPolicy bounds how often a chat is compacted. A compaction rewrites
 // the whole cumulative memory, so it should run per batch, not per message.
 type CompactionPolicy struct {
@@ -121,9 +131,18 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
 		for _, task := range tasks {
 			scope := chat.Scope{AgentID: task.AgentID, BotID: task.BotID, ChatID: task.ChatID, ThreadID: task.ThreadID}
 			if err := (&AgentStore{db: tx}).CheckActions(ctx, scope, task.UserID); err == nil {
-				payload, _ := json.Marshal(agent.JobPayload{Prompt: task.Prompt, TaskID: task.ID, DueAt: task.RunAt, IntervalMS: task.IntervalMS})
-				if _, err := q.Enqueue(ctx, queue.Input{Scope: scope, ActorUserID: task.UserID, Key: fmt.Sprintf("task:%s:%d:%d", task.ID, task.Version, task.RunAt), Kind: "respond", Payload: payload, MaxAttempts: 3}); err != nil {
+				// Coalesce: skip this tick if a previous run is still in-flight.
+				// Missed ticks are not replayed; RunAt advances regardless.
+				var pending int64
+				if err := tx.Raw(`SELECT COUNT(*) FROM queue_jobs WHERE agent_id=? AND bot_id=? AND chat_id=? AND dedupe_key LIKE ? AND status IN ('pending','retry','leased')`,
+					task.AgentID, task.BotID, task.ChatID, fmt.Sprintf("task:%s:%%", task.ID)).Scan(&pending).Error; err != nil {
 					return err
+				}
+				if pending == 0 {
+					payload, _ := json.Marshal(agent.JobPayload{Prompt: task.Prompt, TaskID: task.ID, DueAt: task.RunAt, IntervalMS: task.IntervalMS})
+					if _, err := q.Enqueue(ctx, queue.Input{Scope: scope, ActorUserID: task.UserID, Key: fmt.Sprintf("task:%s:%d:%d", task.ID, task.Version, task.RunAt), Kind: "respond", Payload: payload, MaxAttempts: 3}); err != nil {
+						return err
+					}
 				}
 			} else if errors.Is(err, access.ErrDenied) || errors.Is(err, access.ErrBlocked) || errors.Is(err, ErrChatBlocked) {
 				task.Active = false

@@ -205,15 +205,32 @@ func TestTaskToolsRespectOwnershipAndQuota(t *testing.T) {
 	if err := e.Respond(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
+	// Per-turn limit fires before the quota check; only one task is created.
 	second := m.toolInputs[2][len(m.toolInputs[2])-1].Content
-	if !strings.Contains(second, "maximum number of active tasks") {
-		t.Fatalf("quota not reported to the model: %s", second)
+	if !strings.Contains(second, "Only one task can be created per response") {
+		t.Fatalf("per-turn limit not reported to the model: %s", second)
 	}
 	listed := m.toolInputs[3][len(m.toolInputs[3])-1].Content
 	if !strings.Contains(listed, `"mine":true`) || strings.Count(listed, `"id":"job-`) != 1 {
 		t.Fatalf("task_list: %s", listed)
 	}
 	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
+		t.Fatal(err)
+	}
+	// Quota enforcement: active_tasks_per_user=1, so a second task from a new
+	// turn must be refused even though it is the first create in that turn.
+	quota := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{create("cq"), finish("quota")}}
+	e.Model = quota
+	accept(t, e, scope, 10, "ещё одно напоминание", true)
+	jobQ := take(t, e, "respond")
+	if err := e.Respond(ctx, *jobQ); err != nil {
+		t.Fatal(err)
+	}
+	quotaResult := quota.toolInputs[1][len(quota.toolInputs[1])-1].Content
+	if !strings.Contains(quotaResult, "maximum number of active tasks") {
+		t.Fatalf("quota not reported to the model: %s", quotaResult)
+	}
+	if err := e.DB.Queue().Complete(ctx, jobQ.Receipt); err != nil {
 		t.Fatal(err)
 	}
 	d, _ := e.DB.Agent().Dashboard(ctx)
