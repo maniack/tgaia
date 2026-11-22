@@ -97,6 +97,44 @@ func TestVirtualFilesAPIScopedToChat(t *testing.T) {
 	}
 }
 
+func TestDeleteSkillAndVirtualFile(t *testing.T) {
+	server, db := skillsServer(t)
+	ctx := context.Background()
+	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
+
+	skill, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "my_skill", "A skill", `def run(input_json): return "ok"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Agent().FinishSkillTest(ctx, skill, `{}`, `ok`, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	content := "hello"
+	if err := db.Agent().ApplyVirtualChanges(ctx, scope, 7, []storage.VirtualFileChange{{Path: "/hello.txt", Content: &content}}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	server.deleteSkill(w, httptest.NewRequest("DELETE", "/api/skills", bytes.NewBufferString(`{"agent_id":"test","bot_id":1,"name":"my_skill"}`)))
+	if w.Code != 200 {
+		t.Fatalf("skill delete returned %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := db.Agent().Skill(ctx, "test", 1, "my_skill", false); err == nil {
+		t.Fatal("skill still exists after delete")
+	}
+
+	w = httptest.NewRecorder()
+	server.deleteVirtualFile(w, httptest.NewRequest("DELETE", "/api/vfs", bytes.NewBufferString(`{"agent_id":"test","bot_id":1,"chat_id":100,"path":"/hello.txt"}`)))
+	if w.Code != 200 {
+		t.Fatalf("vfs delete returned %d: %s", w.Code, w.Body.String())
+	}
+	files, err := db.Agent().ListVirtualFiles(ctx, scope, "")
+	if err != nil || len(files) != 0 {
+		t.Fatalf("file still exists after delete: %v %v", files, err)
+	}
+}
+
 func TestStatusIncludesConfiguredCoreCapabilities(t *testing.T) {
 	server, _ := skillsServer(t)
 	server.Config = config.App{LLMModel: "local-model", TelegramMode: "mock", OIDCMode: "mock", MemoryWindow: time.Hour, MemoryInterval: time.Minute}

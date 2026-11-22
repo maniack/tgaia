@@ -138,7 +138,9 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/context", s.context)
 		r.Get("/api/user-profile", s.userProfile)
 		r.Get("/api/skills", s.skills)
+		r.Delete("/api/skills", s.mutation((*Server).deleteSkill))
 		r.Get("/api/vfs", s.virtualFiles)
+		r.Delete("/api/vfs", s.mutation((*Server).deleteVirtualFile))
 		r.Delete("/api/memory", s.mutation((*Server).deleteMemory))
 		r.Post("/api/chat-block", s.mutation((*Server).chatBlock))
 		r.Post("/api/user-block", s.mutation((*Server).userBlock))
@@ -343,6 +345,31 @@ func (s *Server) virtualFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	send(w, map[string]any{"files": rows})
+}
+func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID string `json:"agent_id"`
+		BotID   int64  `json:"bot_id"`
+		Name    string `json:"name"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Agent().DeleteSkill(r.Context(), in.AgentID, in.BotID, in.Name))
+}
+func (s *Server) deleteVirtualFile(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID  string `json:"agent_id"`
+		BotID    int64  `json:"bot_id"`
+		ChatID   int64  `json:"chat_id"`
+		ThreadID int64  `json:"thread_id"`
+		Path     string `json:"path"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	sc := chat.Scope{AgentID: in.AgentID, BotID: in.BotID, ChatID: in.ChatID, ThreadID: in.ThreadID}
+	result(w, s.DB.Agent().ApplyVirtualChanges(r.Context(), sc, 0, []storage.VirtualFileChange{{Path: in.Path}}))
 }
 func (s *Server) userProfile(w http.ResponseWriter, r *http.Request) {
 	userID, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
