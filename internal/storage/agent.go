@@ -55,7 +55,7 @@ func memoriesWithUsers(db *gorm.DB, s chat.Scope) *gorm.DB {
 }
 func (a *AgentStore) Ready(ctx context.Context) error {
 	var count int64
-	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=32").Count(&count).Error; err != nil || count != 1 {
+	if err := a.db.WithContext(ctx).Table("schema_migrations").Where("version=34").Count(&count).Error; err != nil || count != 1 {
 		return errors.New("schema is not ready; run db-migrate")
 	}
 	return nil
@@ -152,7 +152,7 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 			if err := tx.Exec("UPDATE conversation_messages SET text=?,attachments=?,media_text='',update_id=?,reply_to_message_id=? WHERE id=?", in.Text, string(attachments), in.UpdateID, in.ReplyMessageID, old.ID).Error; err != nil {
 				return err
 			}
-			if err := memoryScoped(tx.Table("memory_summaries"), in.Scope).Where("through_id>=?", old.ID).Delete(&struct{}{}).Error; err != nil {
+			if err := memoryScoped(tx.Table("memory_episodes"), in.Scope).Where("through_id>=?", old.ID).Delete(&struct{}{}).Error; err != nil {
 				return err
 			}
 			if err := scoped(tx.Table("chat_directory"), in.Scope).Update("memory_revision", gorm.Expr("memory_revision+1")).Error; err != nil {
@@ -284,20 +284,48 @@ func (a *AgentStore) Context(ctx context.Context, s chat.Scope, through int64, l
 		return result, errors.New("invalid context query")
 	}
 	db := a.db.WithContext(ctx)
-	err := memoryScoped(db.Table("memory_summaries"), s).Take(&result.Summary).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+
+	// Load background episode (the compressed long-term summary).
+	var bgRow struct {
+		ThroughID int64  `gorm:"column:through_id"`
+		Content   string `gorm:"column:content"`
+	}
+	if err := memoryScoped(db.Table("memory_episodes"), s).Where("kind=? AND period_start=0", "background").Take(&bgRow).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return result, errors.New("reading summary failed")
 	}
+	result.Summary.ThroughID = bgRow.ThroughID
+	result.Summary.Content = bgRow.Content
+
 	if result.Summary.ThroughID > 0 {
 		if err := memoryScoped(db.Table("conversation_messages"), s).Select("sent_at").Where("id=?", result.Summary.ThroughID).Scan(&result.Summary.ThroughAt).Error; err != nil {
 			return result, errors.New("reading summary checkpoint failed")
 		}
 	}
+
+	// Load session episodes (detailed per-conversation summaries), oldest first.
+	type episodeRow struct {
+		Kind        string `gorm:"column:kind"`
+		PeriodStart int64  `gorm:"column:period_start"`
+		ThroughID   int64  `gorm:"column:through_id"`
+		Content     string `gorm:"column:content"`
+	}
+	var sessionRows []episodeRow
+	if err := memoryScoped(db.Table("memory_episodes"), s).Where("kind=?", "session").Order("through_id ASC").Find(&sessionRows).Error; err != nil {
+		return result, errors.New("reading session episodes failed")
+	}
+	for _, row := range sessionRows {
+		result.Episodes = append(result.Episodes, agent.Episode{
+			Kind: row.Kind, PeriodStart: row.PeriodStart, ThroughID: row.ThroughID, Content: row.Content,
+		})
+	}
+
+	// PendingCount = messages not yet covered by background (for admin monitoring).
 	if err := memoryScoped(db.Table("conversation_messages"), s).Where("id>?", result.Summary.ThroughID).Count(&result.Summary.PendingCount).Error; err != nil {
 		return result, errors.New("counting recent messages failed")
 	}
+
 	var knowledge struct{ Content string }
-	err = db.Table("shared_knowledge").Where("agent_id=?", s.AgentID).Take(&knowledge).Error
+	err := db.Table("shared_knowledge").Where("agent_id=?", s.AgentID).Take(&knowledge).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return result, errors.New("reading knowledge failed")
 	}
@@ -305,11 +333,20 @@ func (a *AgentStore) Context(ctx context.Context, s chat.Scope, through int64, l
 	if err := memoriesWithUsers(db, s).Order("e.created_at DESC,e.source_message_id DESC").Limit(100).Find(&result.ExplicitMemories).Error; err != nil {
 		return result, errors.New("reading explicit memory failed")
 	}
-	result.Reactions, err = loadReactions(db, s, 200)
-	if err != nil {
-		return result, err
+	var reactErr error
+	result.Reactions, reactErr = loadReactions(db, s, 200)
+	if reactErr != nil {
+		return result, reactErr
 	}
-	query := historyWithUsers(db, s).Where("m.id>?", result.Summary.ThroughID)
+
+	// Load raw messages after the latest episode boundary (session or background).
+	latestThrough := result.Summary.ThroughID
+	for _, ep := range result.Episodes {
+		if ep.ThroughID > latestThrough {
+			latestThrough = ep.ThroughID
+		}
+	}
+	query := historyWithUsers(db, s).Where("m.id>?", latestThrough)
 	if through > 0 {
 		query = query.Where("m.id<=?", through)
 	}
@@ -612,7 +649,7 @@ func (a *AgentStore) SaveSummary(ctx context.Context, job queue.Job, previous, t
 			}
 		}
 		var existing struct{ ThroughID int64 }
-		err := memoryScoped(tx.Table("memory_summaries"), job.Scope).Take(&existing).Error
+		err := memoryScoped(tx.Table("memory_episodes"), job.Scope).Where("kind=? AND period_start=0", "background").Take(&existing).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return errors.New("summary read failed")
 		}
@@ -622,8 +659,7 @@ func (a *AgentStore) SaveSummary(ctx context.Context, job queue.Job, previous, t
 		if existing.ThroughID != previous {
 			return errors.New("summary checkpoint conflict")
 		}
-		// One chat-wide summary row, kept in topic 0 regardless of the job's topic.
-		if err := tx.Exec(`INSERT INTO memory_summaries (agent_id,bot_id,chat_id,thread_id,through_id,content) VALUES (?,?,?,0,?,?) ON CONFLICT (agent_id,bot_id,chat_id,thread_id) DO UPDATE SET through_id=excluded.through_id,content=excluded.content`, job.Scope.AgentID, job.Scope.BotID, job.Scope.ChatID, through, content).Error; err != nil {
+		if err := tx.Exec(`INSERT INTO memory_episodes (agent_id,bot_id,chat_id,kind,period_start,through_id,content,created_at) VALUES (?,?,?,'background',0,?,?,?) ON CONFLICT (agent_id,bot_id,chat_id,kind,period_start) DO UPDATE SET through_id=excluded.through_id,content=excluded.content`, job.Scope.AgentID, job.Scope.BotID, job.Scope.ChatID, through, content, time.Now().UTC().UnixMilli()).Error; err != nil {
 			return errors.New("saving summary failed")
 		}
 		var row struct{ CompactionCount int64 }
@@ -638,6 +674,30 @@ func (a *AgentStore) SaveSummary(ctx context.Context, job queue.Job, previous, t
 	})
 	return count, err
 }
+// SaveSessionEpisode stores a detailed per-conversation summary (session tier).
+// periodStart is the through_id of the previous episode (or 0 for the first),
+// forming the UNIQUE key that makes saves idempotent across retries.
+func (a *AgentStore) SaveSessionEpisode(ctx context.Context, job queue.Job, periodStart, through int64, content string) error {
+	if len(content) == 0 || len(content) > 16000 || through <= 0 {
+		return errors.New("invalid session episode")
+	}
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := fence(tx, job); err != nil {
+			return err
+		}
+		return tx.Exec(`INSERT INTO memory_episodes (agent_id,bot_id,chat_id,kind,period_start,through_id,content,created_at) VALUES (?,?,?,'session',?,?,?,?) ON CONFLICT (agent_id,bot_id,chat_id,kind,period_start) DO UPDATE SET through_id=excluded.through_id,content=excluded.content`, job.Scope.AgentID, job.Scope.BotID, job.Scope.ChatID, periodStart, through, content, time.Now().UTC().UnixMilli()).Error
+	})
+}
+
+// SessionEpisodeCount returns how many session episodes exist for a chat with
+// through_id greater than afterThroughID (i.e. created after the last background
+// compaction). Used to decide when to trigger background compaction.
+func (a *AgentStore) SessionEpisodeCount(ctx context.Context, scope chat.Scope, afterThroughID int64) (int64, error) {
+	var count int64
+	err := memoryScoped(a.db.WithContext(ctx).Table("memory_episodes"), scope).Where("kind=? AND through_id>?", "session", afterThroughID).Count(&count).Error
+	return count, err
+}
+
 func fence(tx *gorm.DB, job queue.Job) error {
 	return (&Database{orm: tx}).Queue().Extend(tx.Statement.Context, job.Receipt, 30*time.Second)
 }
@@ -766,11 +826,22 @@ func (a *AgentStore) ReplyContext(ctx context.Context, s chat.Scope, messageID i
 	if err != nil {
 		return c, time.Time{}, err
 	}
-	if c.Summary.ThroughID >= target.ID {
+	// Use the latest episode boundary that is strictly before the target as
+	// the history floor, so messages covered by session episodes are included
+	// as raw messages when looking up a specific reply target.
+	lowerBound := c.Summary.ThroughID
+	for _, ep := range c.Episodes {
+		if ep.ThroughID < target.ID && ep.ThroughID > lowerBound {
+			lowerBound = ep.ThroughID
+		}
+	}
+	if lowerBound >= target.ID {
 		c.Summary = agent.Summary{}
+		c.Episodes = nil
+		lowerBound = 0
 	}
 	c.Messages = nil
-	if err := historyWithUsers(a.db.WithContext(ctx), s).Where("m.id>? AND m.id<=?", c.Summary.ThroughID, target.ID).Order("m.id DESC").Limit(limit).Find(&c.Messages).Error; err != nil {
+	if err := historyWithUsers(a.db.WithContext(ctx), s).Where("m.id>? AND m.id<=?", lowerBound, target.ID).Order("m.id DESC").Limit(limit).Find(&c.Messages).Error; err != nil {
 		return c, time.Time{}, errors.New("reply context unavailable")
 	}
 	for l, r := 0, len(c.Messages)-1; l < r; l, r = l+1, r-1 {
@@ -820,7 +891,7 @@ func (a *AgentStore) SyncMessage(ctx context.Context, s chat.Scope, id int64, te
 		if err := memoryScoped(tx.Table("conversation_messages"), s).Where("id=?", row.ID).Update("text", text).Error; err != nil {
 			return errors.New("updating history failed")
 		}
-		if err := memoryScoped(tx.Table("memory_summaries"), s).Where("through_id>=?", row.ID).Delete(&struct{}{}).Error; err != nil {
+		if err := memoryScoped(tx.Table("memory_episodes"), s).Where("through_id>=?", row.ID).Delete(&struct{}{}).Error; err != nil {
 			return errors.New("invalidating summary failed")
 		}
 		if err := scoped(tx.Table("chat_directory"), s).Update("memory_revision", gorm.Expr("memory_revision+1")).Error; err != nil {

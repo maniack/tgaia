@@ -280,7 +280,7 @@ func TestCompactionContinuesAfterInputLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := take(t, e, "compact")
-	if err := e.Compact(ctx, *job); err != nil {
+	if err := e.CompactBackground(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
@@ -295,7 +295,7 @@ func TestCompactionContinuesAfterInputLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	job = take(t, e, "compact")
-	if err := e.Compact(ctx, *job); err != nil {
+	if err := e.CompactBackground(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
 	// Compaction is cumulative: the bot receives its current memory and the
@@ -340,7 +340,7 @@ func TestEditedMemoryCanBeCompactedAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := take(t, e, "compact")
-	if err := e.Compact(ctx, *first); err != nil {
+	if err := e.CompactBackground(ctx, *first); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.DB.Queue().Complete(ctx, first.Receipt); err != nil {
@@ -361,7 +361,7 @@ func TestEditedMemoryCanBeCompactedAgain(t *testing.T) {
 		t.Fatal("reused completed compaction")
 	}
 	model.reply = "new summary"
-	if err := e.Compact(ctx, *next); err != nil {
+	if err := e.CompactBackground(ctx, *next); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(model.input[1].Content, "corrected answer") {

@@ -53,7 +53,7 @@ func TestPromptIdentifiesParticipants(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := take(t, e, "compact")
-	if err := e.Compact(ctx, *job); err != nil {
+	if err := e.CompactBackground(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(model.input[1].Content, `from="Иван" @ivan id=7`) {

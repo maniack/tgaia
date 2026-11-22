@@ -101,8 +101,10 @@ func (a *AgentStore) CancelTaskJobs(ctx context.Context, agentID string, botID, 
 // CompactionPolicy bounds how often a chat is compacted. A compaction rewrites
 // the whole cumulative memory, so it should run per batch, not per message.
 type CompactionPolicy struct {
-	MinMessages  int // Compact once this many messages have left the window.
-	MaxUncompact int // ...or earlier, once this many messages are not yet summarized (0 = ignore).
+	MinMessages  int           // Compact once this many messages have left the window.
+	MaxUncompact int           // ...or earlier, once this many messages are not yet summarized (0 = ignore).
+	SessionWindow time.Duration // Silence window for session-tier compaction (0 = same as background window).
+	SessionMinMsgs int          // Min eligible messages for session compaction (0 = same as MinMessages).
 }
 
 // Tick coordinates scheduler replicas through a short DB transaction. LLM work
@@ -167,7 +169,7 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
 				return err
 			}
 		}
-		var scopes []struct {
+		type scopeRow struct {
 			AgentID        string
 			BotID          int64
 			ChatID         int64
@@ -183,11 +185,14 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
 		// compaction for it is already queued: overlapping ranges would each
 		// rewrite the same memory.
 		cutoff := now - window.Milliseconds()
+
+		// Background compaction: based on messages not yet covered by the background episode.
+		var scopes []scopeRow
 		if err := tx.Raw(`SELECT m.agent_id,m.bot_id,m.chat_id,c.memory_revision,COALESCE(s.through_id,0) AS from_id,
  MAX(CASE WHEN m.sent_at<=? THEN m.id END) AS through_id,
  SUM(CASE WHEN m.sent_at<=? THEN 1 ELSE 0 END) AS eligible,COUNT(*) AS pending FROM conversation_messages m
  JOIN chat_directory c ON c.agent_id=m.agent_id AND c.bot_id=m.bot_id AND c.chat_id=m.chat_id
- LEFT JOIN memory_summaries s ON s.agent_id=m.agent_id AND s.bot_id=m.bot_id AND s.chat_id=m.chat_id
+ LEFT JOIN (SELECT agent_id,bot_id,chat_id,through_id FROM memory_episodes WHERE kind='background' AND period_start=0) s ON s.agent_id=m.agent_id AND s.bot_id=m.bot_id AND s.chat_id=m.chat_id
  WHERE c.blocked=? AND m.id>COALESCE(s.through_id,0)
  AND NOT EXISTS (SELECT 1 FROM queue_jobs j WHERE j.agent_id=m.agent_id AND j.bot_id=m.bot_id AND j.chat_id=m.chat_id AND j.kind='compact' AND j.status IN ('pending','retry','leased'))
  GROUP BY m.agent_id,m.bot_id,m.chat_id,s.through_id,c.memory_revision ORDER BY MIN(m.id) LIMIT 64`, cutoff, cutoff, false).Scan(&scopes).Error; err != nil {
@@ -221,6 +226,39 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
 			}
 			payload, _ := json.Marshal(agent.JobPayload{ThroughID: s.ThroughID})
 			if _, err := q.Enqueue(ctx, queue.Input{Scope: chat.Scope{AgentID: s.AgentID, BotID: s.BotID, ChatID: s.ChatID}, Key: fmt.Sprintf("compact:0:%d:%d:%d", s.MemoryRevision, s.FromID, s.ThroughID), Kind: "compact", Payload: payload, MaxAttempts: 3}); err != nil {
+				return err
+			}
+		}
+
+		// Session compaction: opt-in only; skip entirely when no session window is set.
+		if policy.SessionWindow == 0 {
+			return nil
+		}
+		sessionCutoff := now - policy.SessionWindow.Milliseconds()
+		sessionMin := policy.MinMessages
+		if policy.SessionMinMsgs > 0 {
+			sessionMin = policy.SessionMinMsgs
+		}
+		var sessionScopes []scopeRow
+		if err := tx.Raw(`SELECT m.agent_id,m.bot_id,m.chat_id,c.memory_revision,COALESCE(e.through_id,0) AS from_id,
+ MAX(CASE WHEN m.sent_at<=? THEN m.id END) AS through_id,
+ SUM(CASE WHEN m.sent_at<=? THEN 1 ELSE 0 END) AS eligible,COUNT(*) AS pending FROM conversation_messages m
+ JOIN chat_directory c ON c.agent_id=m.agent_id AND c.bot_id=m.bot_id AND c.chat_id=m.chat_id
+ LEFT JOIN (SELECT agent_id,bot_id,chat_id,MAX(through_id) AS through_id FROM memory_episodes GROUP BY agent_id,bot_id,chat_id) e ON e.agent_id=m.agent_id AND e.bot_id=m.bot_id AND e.chat_id=m.chat_id
+ WHERE c.blocked=? AND m.id>COALESCE(e.through_id,0)
+ AND NOT EXISTS (SELECT 1 FROM queue_jobs j WHERE j.agent_id=m.agent_id AND j.bot_id=m.bot_id AND j.chat_id=m.chat_id AND j.kind='compact_session' AND j.status IN ('pending','retry','leased'))
+ GROUP BY m.agent_id,m.bot_id,m.chat_id,e.through_id,c.memory_revision ORDER BY MIN(m.id) LIMIT 64`, sessionCutoff, sessionCutoff, false).Scan(&sessionScopes).Error; err != nil {
+			return err
+		}
+		for _, s := range sessionScopes {
+			if s.Eligible == 0 || s.ThroughID == 0 {
+				continue
+			}
+			if int(s.Eligible) < sessionMin {
+				continue
+			}
+			payload, _ := json.Marshal(agent.JobPayload{ThroughID: s.ThroughID})
+			if _, err := q.Enqueue(ctx, queue.Input{Scope: chat.Scope{AgentID: s.AgentID, BotID: s.BotID, ChatID: s.ChatID}, Key: fmt.Sprintf("compact_session:0:%d:%d:%d", s.MemoryRevision, s.FromID, s.ThroughID), Kind: "compact_session", Payload: payload, MaxAttempts: 3}); err != nil {
 				return err
 			}
 		}
