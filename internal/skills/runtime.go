@@ -84,7 +84,7 @@ func virtualPath(raw string) (string, error) {
 	if strings.HasPrefix(raw, "/tmp/") && len(raw) > len("/tmp/") && len(raw) <= 512 && !strings.Contains(raw, "..") {
 		return raw, nil
 	}
-	if len(raw) > 512 || (!strings.HasPrefix(raw, "/user/") && !strings.HasPrefix(raw, "/chat/") && !strings.HasPrefix(raw, "/bot/")) || strings.Contains(raw, "..") {
+	if len(raw) > 512 || !strings.HasPrefix(raw, "/") || strings.Contains(raw, "..") || strings.Contains(raw, "\x00") {
 		return "", errors.New("invalid virtual path")
 	}
 	return raw, nil
@@ -156,11 +156,11 @@ func (s *runState) delete(_ *starlark.Thread, _ *starlark.Builtin, args starlark
 }
 
 func (s *runState) list(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var namespace string
-	if err := starlark.UnpackArgs("vfs_list", args, kwargs, "namespace", &namespace); err != nil {
+	var tmp bool
+	if err := starlark.UnpackArgs("vfs_list", args, kwargs, "tmp?", &tmp); err != nil {
 		return nil, err
 	}
-	if namespace == "tmp" {
+	if tmp {
 		paths := make([]string, 0, len(s.tmp))
 		for p := range s.tmp {
 			paths = append(paths, p)
@@ -172,17 +172,17 @@ func (s *runState) list(_ *starlark.Thread, _ *starlark.Builtin, args starlark.T
 		}
 		return starlark.NewList(values), nil
 	}
-	rows, err := s.store.ListVirtualFiles(s.ctx, s.scope, s.userID, namespace, "")
+	rows, err := s.store.ListVirtualFiles(s.ctx, s.scope, "")
 	if err != nil {
 		return nil, err
 	}
-	paths := storage.VirtualPaths(rows, namespace)
+	paths := storage.VirtualPaths(rows)
 	seen := map[string]bool{}
 	for _, p := range paths {
 		seen[p] = true
 	}
 	for p, content := range s.changes {
-		if strings.HasPrefix(p, "/"+namespace+"/") {
+		if !strings.HasPrefix(p, "/tmp/") {
 			seen[p] = content != nil
 		}
 	}

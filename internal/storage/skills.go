@@ -141,64 +141,40 @@ func (a *AgentStore) DeleteSkill(ctx context.Context, agentID string, botID int6
 	return a.db.WithContext(ctx).Table("agent_skills").Where("agent_id=? AND bot_id=? AND name=?", agentID, botID, name).Delete(&Skill{}).Error
 }
 
-func cleanVirtualPath(raw string) (string, string, error) {
+func cleanVirtualPath(raw string) (string, error) {
 	if len(raw) > 512 || !strings.HasPrefix(raw, "/") || strings.Contains(raw, "\x00") {
-		return "", "", errors.New("invalid virtual path")
+		return "", errors.New("invalid virtual path")
 	}
 	for _, segment := range strings.Split(raw, "/") {
 		if segment == ".." {
-			return "", "", errors.New("invalid virtual path")
+			return "", errors.New("invalid virtual path")
 		}
 	}
-	clean := path.Clean(raw)
-	parts := strings.Split(strings.TrimPrefix(clean, "/"), "/")
-	if len(parts) < 2 || !map[string]bool{"user": true, "chat": true, "bot": true}[parts[0]] {
-		return "", "", errors.New("path must start with /user, /chat or /bot")
-	}
-	return parts[0], strings.Join(parts[1:], "/"), nil
+	return strings.TrimPrefix(path.Clean(raw), "/"), nil
 }
 
-func virtualScope(q *gorm.DB, scope chat.Scope, userID int64, namespace string) *gorm.DB {
-	q = q.Where("agent_id=? AND namespace=?", scope.AgentID, namespace)
-	switch namespace {
-	case "user":
-		return q.Where("bot_id=0 AND chat_id=0 AND user_id=?", userID)
-	case "chat":
-		return q.Where("bot_id=? AND chat_id=? AND user_id=0", scope.BotID, scope.ChatID)
-	default:
-		return q.Where("bot_id=? AND chat_id=0 AND user_id=0", scope.BotID)
-	}
-}
-
-func virtualKeys(scope chat.Scope, userID int64, namespace string) (int64, int64, int64) {
-	switch namespace {
-	case "user":
-		return 0, 0, userID
-	case "chat":
-		return scope.BotID, scope.ChatID, 0
-	default:
-		return scope.BotID, 0, 0
-	}
+func virtualScope(q *gorm.DB, scope chat.Scope) *gorm.DB {
+	return q.Where("agent_id=? AND namespace='chat' AND bot_id=? AND chat_id=? AND user_id=0", scope.AgentID, scope.BotID, scope.ChatID)
 }
 
 func (a *AgentStore) ReadVirtualFile(ctx context.Context, scope chat.Scope, userID int64, rawPath string) (VirtualFile, error) {
 	var row VirtualFile
-	ns, filePath, err := cleanVirtualPath(rawPath)
-	if err != nil || (ns == "user" && userID <= 0) {
+	filePath, err := cleanVirtualPath(rawPath)
+	if err != nil {
 		return row, errors.New("invalid virtual file")
 	}
-	if err := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope, userID, ns).Where("path=?", filePath).Take(&row).Error; err != nil {
+	if err := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope).Where("path=?", filePath).Take(&row).Error; err != nil {
 		return row, errors.New("virtual file not found")
 	}
 	return row, nil
 }
 
-func (a *AgentStore) ListVirtualFiles(ctx context.Context, scope chat.Scope, userID int64, namespace, prefix string) ([]VirtualFile, error) {
+func (a *AgentStore) ListVirtualFiles(ctx context.Context, scope chat.Scope, prefix string) ([]VirtualFile, error) {
 	var rows []VirtualFile
-	if !map[string]bool{"user": true, "chat": true, "bot": true}[namespace] || (namespace == "user" && userID <= 0) || len(prefix) > 512 {
+	if len(prefix) > 512 {
 		return rows, errors.New("invalid virtual file query")
 	}
-	q := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope, userID, namespace)
+	q := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope)
 	if prefix = strings.Trim(strings.TrimSpace(prefix), "/"); prefix != "" {
 		q = q.Where("path LIKE ?", prefix+"%")
 	}
@@ -222,13 +198,13 @@ func (a *AgentStore) ApplyVirtualChanges(ctx context.Context, scope chat.Scope, 
 		limit = maxNamespaceBytes[0]
 	}
 	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		modified := map[string]bool{}
+		anyWrite := false
 		for _, change := range changes {
-			ns, filePath, err := cleanVirtualPath(change.Path)
-			if err != nil || (ns == "user" && userID <= 0) {
+			filePath, err := cleanVirtualPath(change.Path)
+			if err != nil {
 				return errors.New("invalid virtual file change: " + change.Path)
 			}
-			q := virtualScope(tx.Table("virtual_files"), scope, userID, ns).Where("path=?", filePath)
+			q := virtualScope(tx.Table("virtual_files"), scope).Where("path=?", filePath)
 			if change.Content == nil {
 				if err := q.Delete(&VirtualFile{}).Error; err != nil {
 					return err
@@ -238,36 +214,33 @@ func (a *AgentStore) ApplyVirtualChanges(ctx context.Context, scope chat.Scope, 
 			if len(*change.Content) > 256000 {
 				return errors.New("virtual file exceeds the 256 KB limit: " + change.Path)
 			}
-			botID, chatID, scopedUser := virtualKeys(scope, userID, ns)
 			now := time.Now().UTC().UnixMilli()
-			row := map[string]any{"agent_id": scope.AgentID, "bot_id": botID, "chat_id": chatID, "user_id": scopedUser, "namespace": ns, "path": filePath, "content": *change.Content, "mime_type": "text/plain", "version": 1, "created_at": now, "updated_at": now}
+			row := map[string]any{"agent_id": scope.AgentID, "bot_id": scope.BotID, "chat_id": scope.ChatID, "user_id": 0, "namespace": "chat", "path": filePath, "content": *change.Content, "mime_type": "text/plain", "version": 1, "created_at": now, "updated_at": now}
 			if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "agent_id"}, {Name: "bot_id"}, {Name: "chat_id"}, {Name: "user_id"}, {Name: "namespace"}, {Name: "path"}}, DoUpdates: clause.Assignments(map[string]any{"content": *change.Content, "version": gorm.Expr("virtual_files.version+1"), "updated_at": now})}).Table("virtual_files").Create(row).Error; err != nil {
 				return err
 			}
-			modified[ns] = true
+			anyWrite = true
 		}
-		if limit > 0 {
-			for ns := range modified {
-				var row struct {
-					Bytes int64
-				}
-				if err := virtualScope(tx.Table("virtual_files"), scope, userID, ns).
-					Select("COALESCE(SUM(LENGTH(content)), 0) AS bytes").Scan(&row).Error; err != nil {
-					return err
-				}
-				if row.Bytes > int64(limit) {
-					return fmt.Errorf("%w: namespace %s uses %d bytes, limit is %d", ErrVFSQuota, ns, row.Bytes, limit)
-				}
+		if limit > 0 && anyWrite {
+			var row struct {
+				Bytes int64
+			}
+			if err := virtualScope(tx.Table("virtual_files"), scope).
+				Select("COALESCE(SUM(LENGTH(content)), 0) AS bytes").Scan(&row).Error; err != nil {
+				return err
+			}
+			if row.Bytes > int64(limit) {
+				return fmt.Errorf("%w: chat namespace uses %d bytes, limit is %d", ErrVFSQuota, row.Bytes, limit)
 			}
 		}
 		return nil
 	})
 }
 
-func VirtualPaths(rows []VirtualFile, namespace string) []string {
+func VirtualPaths(rows []VirtualFile) []string {
 	paths := make([]string, 0, len(rows))
 	for _, row := range rows {
-		paths = append(paths, "/"+namespace+"/"+row.Path)
+		paths = append(paths, "/"+row.Path)
 	}
 	sort.Strings(paths)
 	return paths
@@ -285,11 +258,11 @@ type VirtualFileStat struct {
 
 func (a *AgentStore) StatVirtualFile(ctx context.Context, scope chat.Scope, userID int64, rawPath string) (VirtualFileStat, error) {
 	var row VirtualFileStat
-	ns, filePath, err := cleanVirtualPath(rawPath)
-	if err != nil || (ns == "user" && userID <= 0) {
+	filePath, err := cleanVirtualPath(rawPath)
+	if err != nil {
 		return row, errors.New("invalid virtual file")
 	}
-	if err := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope, userID, ns).
+	if err := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope).
 		Select("path, namespace, LENGTH(content) AS bytes, version, created_at, updated_at").
 		Where("path=?", filePath).Take(&row).Error; err != nil {
 		return row, errors.New("virtual file not found")
@@ -303,18 +276,14 @@ type VirtualNamespaceUsage struct {
 	Bytes int64 `json:"bytes"`
 }
 
-func (a *AgentStore) VirtualUsage(ctx context.Context, scope chat.Scope, userID int64) (map[string]VirtualNamespaceUsage, error) {
-	result := map[string]VirtualNamespaceUsage{"user": {}, "chat": {}, "bot": {}}
-	for _, ns := range []string{"user", "chat", "bot"} {
-		var row struct {
-			Files int64
-			Bytes int64
-		}
-		if err := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope, userID, ns).
-			Select("COUNT(*) AS files, COALESCE(SUM(LENGTH(content)), 0) AS bytes").Scan(&row).Error; err != nil {
-			return nil, errors.New("virtual usage query failed")
-		}
-		result[ns] = VirtualNamespaceUsage{Files: row.Files, Bytes: row.Bytes}
+func (a *AgentStore) VirtualUsage(ctx context.Context, scope chat.Scope, userID int64) (VirtualNamespaceUsage, error) {
+	var row struct {
+		Files int64
+		Bytes int64
 	}
-	return result, nil
+	if err := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope).
+		Select("COUNT(*) AS files, COALESCE(SUM(LENGTH(content)), 0) AS bytes").Scan(&row).Error; err != nil {
+		return VirtualNamespaceUsage{}, errors.New("virtual usage query failed")
+	}
+	return VirtualNamespaceUsage{Files: row.Files, Bytes: row.Bytes}, nil
 }

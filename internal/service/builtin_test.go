@@ -412,7 +412,7 @@ func TestAgentCanCreateTestAndRunDatabaseSkill(t *testing.T) {
 	e, _, _, scope := engineFixture(t)
 	ctx := context.Background()
 	m := &scriptedModel{reply: `{"reply":"Готово."}`, turns: []llm.Message{
-		call("c1", toolSkillCreate, `{"name":"remember_note","description":"Store a user note","source":"def run(input_json):\n    vfs_write(\"/user/note.txt\", input_json)\n    return input_json"}`),
+		call("c1", toolSkillCreate, `{"name":"remember_note","description":"Store a user note","source":"def run(input_json):\n    vfs_write(\"/note.txt\", input_json)\n    return input_json"}`),
 		call("c2", toolSkillTest, `{"name":"remember_note","input_json":"{\"note\":\"test\"}"}`),
 		call("c3", toolSkillRun, `{"name":"remember_note","input_json":"{\"note\":\"persistent\"}"}`),
 		finish("created and ran the skill"),
@@ -427,7 +427,7 @@ func TestAgentCanCreateTestAndRunDatabaseSkill(t *testing.T) {
 	if err != nil || skill.Version != 1 || skill.Status != "active" {
 		t.Fatalf("skill not active: %+v %v", skill, err)
 	}
-	file, err := e.DB.Agent().ReadVirtualFile(ctx, scope, 7, "/user/note.txt")
+	file, err := e.DB.Agent().ReadVirtualFile(ctx, scope, 7, "/note.txt")
 	if err != nil || file.Content != `{"note":"persistent"}` {
 		t.Fatalf("skill VFS write failed: %+v %v", file, err)
 	}

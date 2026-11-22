@@ -40,25 +40,21 @@ func TestRuntimeUsesOnlyTransactionalVirtualFilesystem(t *testing.T) {
 	ctx := context.Background()
 	runtime := skills.Runtime{Store: db.Agent()}
 	source := `def run(input_json):
-    vfs_write("/user/preferences.txt", input_json)
-    vfs_write("/chat/notes.txt", "shared")
-    vfs_write("/bot/cache.txt", "bot")
+    vfs_write("/preferences.txt", input_json)
+    vfs_write("/notes.txt", "shared")
     vfs_write("/tmp/work.txt", "temporary")
-    return vfs_read("/user/preferences.txt") + ":" + vfs_read("/tmp/work.txt")`
+    return vfs_read("/preferences.txt") + ":" + vfs_read("/tmp/work.txt")`
 	output, err := runtime.Run(ctx, scope, 7, source, `{"language":"ru"}`, true)
 	if err != nil || output != `{"language":"ru"}:temporary` {
 		t.Fatalf("output=%q err=%v", output, err)
 	}
-	for _, path := range []string{"/user/preferences.txt", "/chat/notes.txt", "/bot/cache.txt"} {
+	for _, path := range []string{"/preferences.txt", "/notes.txt"} {
 		if _, err := db.Agent().ReadVirtualFile(ctx, scope, 7, path); err != nil {
 			t.Fatalf("%s not committed: %v", path, err)
 		}
 	}
 	if _, err := db.Agent().ReadVirtualFile(ctx, scope, 7, "/tmp/work.txt"); err == nil {
 		t.Fatal("temporary file escaped into the database")
-	}
-	if _, err := db.Agent().ReadVirtualFile(ctx, scope, 8, "/user/preferences.txt"); err == nil {
-		t.Fatal("another user read private virtual storage")
 	}
 }
 
@@ -67,17 +63,17 @@ func TestRuntimeTestRunDoesNotCommitAndRejectsHostAccess(t *testing.T) {
 	runtime := skills.Runtime{Store: db.Agent()}
 	ctx := context.Background()
 	if _, err := runtime.Run(ctx, scope, 7, `def run(input_json):
-    vfs_write("/chat/draft.txt", "draft")
+    vfs_write("/draft.txt", "draft")
     return "ok"`, `{}`, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Agent().ReadVirtualFile(ctx, scope, 7, "/chat/draft.txt"); err == nil {
+	if _, err := db.Agent().ReadVirtualFile(ctx, scope, 7, "/draft.txt"); err == nil {
 		t.Fatal("test run committed a file")
 	}
 	for _, source := range []string{
 		`load("os", "system")
 def run(input_json): return system("id")`,
-		`def run(input_json): return vfs_read("/chat/../../etc/passwd")`,
+		`def run(input_json): return vfs_read("/../etc/passwd")`,
 	} {
 		if _, err := runtime.Run(ctx, scope, 7, source, `{}`, true); err == nil || (!strings.Contains(err.Error(), "load") && !strings.Contains(err.Error(), "virtual path")) {
 			t.Fatalf("unsafe source was not rejected: %v", err)

@@ -285,7 +285,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		{"name": "Memory compaction", "state": "ready", "detail": fmt.Sprintf("Window %s; scan interval %s", s.Config.MemoryWindow, s.Config.MemoryInterval)},
 		{"name": "Image understanding", "state": "ready", "detail": "Descriptions feed history and compaction"},
 		{"name": "Agent-written skills", "state": "ready", "detail": "Versioned Starlark sandbox with automatic test activation"},
-		{"name": "Virtual filesystem", "state": "ready", "detail": "Database-backed /user, /chat and /bot namespaces"},
+		{"name": "Virtual filesystem", "state": "ready", "detail": "Database-backed chat-scoped virtual storage"},
 		{"name": "Authentication", "state": "ready", "detail": map[bool]string{true: "Local mock OIDC", false: "OpenID Connect"}[s.Config.OIDCMode == "mock"]},
 		{"name": "Group moderation", "state": map[bool]string{true: "conditional", false: "off"}[s.Config.TelegramAdminTools], "detail": map[bool]string{true: "Each action also requires live Telegram administrator rights", false: "Enable telegram.admin_tools to allow permission checks"}[s.Config.TelegramAdminTools]},
 		{"name": "External integrations", "state": map[bool]string{true: "ready", false: "off"}[enabledMCP > 0], "detail": fmt.Sprintf("%d enabled MCP servers", enabledMCP)},
@@ -337,7 +337,7 @@ func (s *Server) virtualFiles(w http.ResponseWriter, r *http.Request) {
 		send(w, map[string]any{"file": file})
 		return
 	}
-	rows, err := s.DB.Agent().ListVirtualFiles(r.Context(), sc, userID, r.URL.Query().Get("namespace"), r.URL.Query().Get("prefix"))
+	rows, err := s.DB.Agent().ListVirtualFiles(r.Context(), sc, r.URL.Query().Get("prefix"))
 	if err != nil {
 		http.Error(w, "Virtual files unavailable", 400)
 		return

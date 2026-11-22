@@ -64,38 +64,36 @@ func TestSkillsAPIListsCatalogAndVersions(t *testing.T) {
 	}
 }
 
-func TestVirtualFilesAPIEnforcesNamespaceScope(t *testing.T) {
+func TestVirtualFilesAPIScopedToChat(t *testing.T) {
 	server, db := skillsServer(t)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
-	private := "private note"
-	shared := "shared note"
-	if err := db.Agent().ApplyVirtualChanges(ctx, scope, 7, []storage.VirtualFileChange{{Path: "/user/note.txt", Content: &private}, {Path: "/chat/shared.txt", Content: &shared}}); err != nil {
+	otherScope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 200}
+	note := "chat note"
+	other := "other chat note"
+	if err := db.Agent().ApplyVirtualChanges(ctx, scope, 7, []storage.VirtualFileChange{{Path: "/note.txt", Content: &note}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Agent().ApplyVirtualChanges(ctx, otherScope, 7, []storage.VirtualFileChange{{Path: "/note.txt", Content: &other}}); err != nil {
 		t.Fatal(err)
 	}
 
 	w := httptest.NewRecorder()
-	server.virtualFiles(w, httptest.NewRequest("GET", "/api/vfs?agent_id=test&bot_id=1&chat_id=100&namespace=user&user_id=7", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"path":"note.txt"`) || strings.Contains(w.Body.String(), "shared note") {
-		t.Fatalf("user listing %d: %s", w.Code, w.Body.String())
+	server.virtualFiles(w, httptest.NewRequest("GET", "/api/vfs?agent_id=test&bot_id=1&chat_id=100", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"path":"note.txt"`) || strings.Contains(w.Body.String(), "other chat note") {
+		t.Fatalf("chat listing %d: %s", w.Code, w.Body.String())
 	}
 
 	w = httptest.NewRecorder()
-	server.virtualFiles(w, httptest.NewRequest("GET", "/api/vfs?agent_id=test&bot_id=1&chat_id=100&user_id=7&path=/user/note.txt", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "private note") {
+	server.virtualFiles(w, httptest.NewRequest("GET", "/api/vfs?agent_id=test&bot_id=1&chat_id=100&path=/note.txt", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "chat note") {
 		t.Fatalf("file response %d: %s", w.Code, w.Body.String())
 	}
 
 	w = httptest.NewRecorder()
-	server.virtualFiles(w, httptest.NewRequest("GET", "/api/vfs?agent_id=test&bot_id=1&chat_id=100&user_id=8&path=/user/note.txt", nil))
+	server.virtualFiles(w, httptest.NewRequest("GET", "/api/vfs?agent_id=test&bot_id=1&chat_id=100&path=/nonexistent.txt", nil))
 	if w.Code != 404 {
-		t.Fatalf("foreign user file returned %d: %s", w.Code, w.Body.String())
-	}
-
-	w = httptest.NewRecorder()
-	server.virtualFiles(w, httptest.NewRequest("GET", "/api/vfs?agent_id=test&bot_id=1&chat_id=100&namespace=host&user_id=7", nil))
-	if w.Code != 400 {
-		t.Fatalf("invalid namespace returned %d", w.Code)
+		t.Fatalf("missing file returned %d: %s", w.Code, w.Body.String())
 	}
 }
 
