@@ -248,7 +248,7 @@ func (a *AgentStore) ChatBehavior(ctx context.Context, scope chat.Scope) (agent.
 	if !scope.Valid() {
 		return behavior, errors.New("invalid conversation scope")
 	}
-	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Select("agent_id,bot_id,chat_id,group_response,respond_to_bots,loop_protection,chat_tool_rounds,chat_tool_calls,allow_skip,auto_approve_corrections,behavior_version AS version").Take(&behavior).Error
+	err := scoped(a.db.WithContext(ctx).Table("chat_directory"), scope).Select("agent_id,bot_id,chat_id,kind,group_response,respond_to_bots,loop_protection,chat_tool_rounds,chat_tool_calls,allow_skip,auto_approve_corrections,behavior_version AS version").Take(&behavior).Error
 	if err != nil {
 		return behavior, errors.New("conversation behavior unavailable")
 	}

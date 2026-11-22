@@ -103,6 +103,12 @@ type Task struct {
 	IntervalMS int64  `json:"interval_ms"`
 	Active     bool   `json:"active"`
 	Version    int64  `json:"version"`
+	// MaxRuns limits how many times a recurring task fires (0 = unlimited).
+	// RunCount is incremented each time a task run is enqueued.
+	// UntilAt is a Unix millisecond timestamp after which the task stops firing (0 = no expiry).
+	MaxRuns  int64 `json:"max_runs,omitempty"`
+	RunCount int64 `json:"run_count,omitempty"`
+	UntilAt  int64 `json:"until_at,omitempty"`
 }
 type Conversation struct {
 	ThreadID int64  `json:"thread_id"`
@@ -172,8 +178,10 @@ type ChatBehavior struct {
 	AllowSkip bool `json:"allow_skip"`
 	// AutoApproveCorrections applies the bot's own behaviour corrections in
 	// this chat without an operator's review.
-	AutoApproveCorrections bool  `json:"auto_approve_corrections"`
-	Version                int64 `json:"version"`
+	AutoApproveCorrections bool   `json:"auto_approve_corrections"`
+	Version                int64  `json:"version"`
+	// Kind is the Telegram chat type: "private", "group", "supergroup", "channel".
+	Kind string `json:"kind,omitempty"`
 }
 
 // ReactionUpdate is the current reaction set reported by Telegram for one

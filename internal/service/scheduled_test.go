@@ -20,7 +20,7 @@ func dueReminder(t *testing.T) (*Engine, *testModel, *testSender, *queue.Job) {
 	// Reproduce the screenshot, including the earlier acknowledgement in history.
 	// The task itself is created through the task_create tool.
 	creator := &scriptedModel{reply: `{"reply":"Хорошо, я напомню тебе выпить воды через 5 минут."}`, turns: []llm.Message{
-		call("c1", toolTaskCreate, `{"prompt":"Напомни мне выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`),
+		call("c1", toolTaskCreate, `{"prompt":"Напомни мне выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0,"confirmed":true}`),
 		finish("Task created; acknowledge briefly."),
 	}}
 	e.Model = creator

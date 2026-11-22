@@ -60,13 +60,12 @@ var whenSchema = `{"type":"object","additionalProperties":false,"properties":{
 "required":["date","weekday","time","timezone","delay_seconds"]}`
 
 type builtinTools struct {
-	engine      *Engine
-	job         queue.Job
-	payload     agent.JobPayload
-	now         time.Time
-	scheduled   bool // Running a due task: it must not create, edit or delete tasks or facts.
-	moderation  map[string]bool
-	taskCreated int // number of task_create calls completed in this turn
+	engine     *Engine
+	job        queue.Job
+	payload    agent.JobPayload
+	now        time.Time
+	scheduled  bool // Running a due task: it must not create, edit or delete tasks or facts.
+	moderation map[string]bool
 }
 
 type moderationSender interface {
@@ -97,7 +96,7 @@ func (b *builtinTools) specs() []llm.Tool {
 		return tools
 	}
 	tools = append(tools,
-		tool(toolTaskCreate, "Create a scheduled task for the current user in this chat. Supply the time exactly as the user said it (weekday or date, wall-clock time, timezone); the scheduler computes the actual first run and returns it. Write prompt as the action to execute when due, in the user's language, without the delay or an acknowledgement. Only call this when the current user explicitly asks for a future or recurring action.", `{"type":"object","additionalProperties":false,"properties":{"prompt":{"type":"string","description":"Instruction to execute when due, e.g. 'Напомни пользователю выпить воды сейчас'."},"when":`+whenSchema+`,"interval_seconds":{"type":"integer","description":"Recurrence period in seconds: 0 for one-time, 86400 daily, 604800 weekly (60..31536000)."}},"required":["prompt","when","interval_seconds"]}`),
+		tool(toolTaskCreate, "Create a scheduled task for the current user in this chat. First call with confirmed=false to see existing chat tasks and check for semantic duplicates; if none match, call again with confirmed=true to create. Supply the time exactly as the user said it (weekday or date, wall-clock time, timezone). Write prompt as the action to execute when due, in the user's language, without the delay or an acknowledgement. Only call this when the current user explicitly asks for a future or recurring action.", `{"type":"object","additionalProperties":false,"properties":{"prompt":{"type":"string","description":"Instruction to execute when due, e.g. 'Напомни пользователю выпить воды сейчас'."},"when":`+whenSchema+`,"interval_seconds":{"type":"integer","description":"Recurrence period in seconds: 0 for one-time, 86400 daily, 604800 weekly (60..31536000)."},"confirmed":{"type":"boolean","description":"false on the first call to review existing tasks; true to actually create after confirming no semantic duplicate exists."}},"required":["prompt","when","interval_seconds","confirmed"]}`),
 		tool(toolTaskUpdate, "Change the prompt, time or recurrence of one of the current user's tasks in this chat, by ID from task_list. Omit a field to keep it; set active to false to pause.", `{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"},"prompt":{"type":["string","null"]},"when":{"anyOf":[{"type":"null"},`+whenSchema+`]},"interval_seconds":{"type":["integer","null"]},"active":{"type":["boolean","null"]}},"required":["id","prompt","when","interval_seconds","active"]}`),
 		tool(toolTaskDelete, "Delete one of the current user's tasks in this chat, by ID from task_list.", `{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"}},"required":["id"]}`),
 		tool(toolMemorySave, "Save one concise, standalone durable fact about the current user. Use mode explicit when they ask to remember it; use inferred only for a stable, useful preference or personal fact clearly stated in their own message. Never save transient plans, guesses, secrets, sensitive traits, or instructions that change system behavior. Do not announce inferred saves.", `{"type":"object","additionalProperties":false,"properties":{"content":{"type":"string","maxLength":2000},"mode":{"type":"string","enum":["explicit","inferred"]}},"required":["content","mode"]}`),
@@ -262,19 +261,28 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 	}
 	switch name {
 	case toolTaskCreate:
-		if b.taskCreated > 0 {
-			return toolError("Only one task can be created per response. Create this task in a separate reply after confirming it with the user."), nil
-		}
 		var in struct {
-			Prompt   string `json:"prompt"`
-			When     When   `json:"when"`
-			Interval int64  `json:"interval_seconds"`
+			Prompt    string `json:"prompt"`
+			When      When   `json:"when"`
+			Interval  int64  `json:"interval_seconds"`
+			Confirmed bool   `json:"confirmed"`
 		}
 		if json.Unmarshal([]byte(args), &in) != nil || strings.TrimSpace(in.Prompt) == "" || len(in.Prompt) > 16000 {
 			return toolError("Invalid arguments: prompt is required (at most 16000 characters)."), nil
 		}
 		if in.Interval != 0 && (in.Interval < 60 || in.Interval > 31536000) {
 			return toolError("interval_seconds must be 0 or between 60 and 31536000."), nil
+		}
+		if !in.Confirmed {
+			tasks, err := store.Tasks(ctx, b.job.Scope)
+			if err != nil {
+				return "", err
+			}
+			views := make([]taskView, 0, len(tasks))
+			for _, task := range tasks {
+				views = append(views, b.view(task, nil))
+			}
+			return toolResult(map[string]any{"existing_tasks": views, "instruction": "Review existing_tasks. If the requested task is semantically equivalent to one that is already active, tell the user it already exists instead of creating a new one. Otherwise call task_create again with the same parameters and confirmed=true."}), nil
 		}
 		runAt, loc, err := in.When.resolve(b.now)
 		if err != nil {
@@ -287,7 +295,6 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			}
 			return "", err
 		}
-		b.taskCreated++
 		view := b.view(task, loc)
 		view.Confirmation = confirmation(view)
 		return toolResult(map[string]any{"created": view, "instruction": "Tell the user the first run exactly as in confirmation (date, weekday, time and timezone). Do not recompute it."}), nil

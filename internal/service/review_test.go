@@ -88,7 +88,7 @@ func TestWeekdayScheduleIsComputedByCode(t *testing.T) {
 	now := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC) // Wednesday.
 	e.Now = func() time.Time { return now }
 	m := &scriptedModel{reply: `{"reply":"Запланировал тост."}`, turns: []llm.Message{
-		call("c1", toolTaskCreate, `{"prompt":"Напиши тост для команды","when":{"date":"","weekday":"thursday","time":"19:00","timezone":"Europe/Moscow","delay_seconds":0},"interval_seconds":604800}`),
+		call("c1", toolTaskCreate, `{"prompt":"Напиши тост для команды","when":{"date":"","weekday":"thursday","time":"19:00","timezone":"Europe/Moscow","delay_seconds":0},"interval_seconds":604800,"confirmed":true}`),
 		finish("Weekly task created."),
 	}}
 	e.Model = m

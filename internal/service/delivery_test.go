@@ -150,7 +150,7 @@ func (f *thinkingFixture) CompleteTools(_ context.Context, in []llm.Message, _ [
 		answer.ReasoningContent = "Thought: reply now."
 		return answer, nil
 	}
-	return llm.Message{Role: "assistant", ReasoningContent: "Thought: schedule it.", ToolCalls: []llm.ToolCall{{ID: "c1", Type: "function", Function: llm.ToolFunction{Name: toolTaskCreate, Arguments: `{"prompt":"Напомни пользователю выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0}`}}}}, nil
+	return llm.Message{Role: "assistant", ReasoningContent: "Thought: schedule it.", ToolCalls: []llm.ToolCall{{ID: "c1", Type: "function", Function: llm.ToolFunction{Name: toolTaskCreate, Arguments: `{"prompt":"Напомни пользователю выпить воды сейчас","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":300},"interval_seconds":0,"confirmed":true}`}}}}, nil
 }
 
 // Reasoning never reaches the user: only the reply argument (or, failing

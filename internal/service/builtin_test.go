@@ -195,20 +195,24 @@ func TestTaskToolsRespectOwnershipAndQuota(t *testing.T) {
 	ctx := context.Background()
 	e.Now = func() time.Time { return time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC) }
 	e.Config.Limits = map[string]string{"active_tasks_per_user": "1"}
-	create := func(id string) llm.Message {
-		return call(id, toolTaskCreate, `{"prompt":"task `+id+`","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":3600},"interval_seconds":0}`)
+	check := func(id string) llm.Message {
+		return call(id, toolTaskCreate, `{"prompt":"task `+id+`","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":3600},"interval_seconds":0,"confirmed":false}`)
 	}
-	m := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{create("c1"), create("c2"), call("c3", toolTaskList, `{}`), finish("done")}}
+	create := func(id string) llm.Message {
+		return call(id, toolTaskCreate, `{"prompt":"task `+id+`","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":3600},"interval_seconds":0,"confirmed":true}`)
+	}
+	// Two-step flow: pre-flight (confirmed=false) shows existing tasks, then confirmed=true creates.
+	m := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{check("c1"), create("c1"), call("c3", toolTaskList, `{}`), finish("done")}}
 	e.Model = m
-	accept(t, e, scope, 1, "два напоминания", true)
+	accept(t, e, scope, 1, "напоминание", true)
 	job := take(t, e, "respond")
 	if err := e.Respond(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
-	// Per-turn limit fires before the quota check; only one task is created.
-	second := m.toolInputs[2][len(m.toolInputs[2])-1].Content
-	if !strings.Contains(second, "Only one task can be created per response") {
-		t.Fatalf("per-turn limit not reported to the model: %s", second)
+	// Pre-flight returns existing_tasks (empty at this point).
+	preflight := m.toolInputs[1][len(m.toolInputs[1])-1].Content
+	if !strings.Contains(preflight, "existing_tasks") {
+		t.Fatalf("pre-flight result missing existing_tasks: %s", preflight)
 	}
 	listed := m.toolInputs[3][len(m.toolInputs[3])-1].Content
 	if !strings.Contains(listed, `"mine":true`) || strings.Count(listed, `"id":"job-`) != 1 {
@@ -217,8 +221,7 @@ func TestTaskToolsRespectOwnershipAndQuota(t *testing.T) {
 	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
 		t.Fatal(err)
 	}
-	// Quota enforcement: active_tasks_per_user=1, so a second task from a new
-	// turn must be refused even though it is the first create in that turn.
+	// Quota enforcement: active_tasks_per_user=1, so a second task from a new turn must be refused.
 	quota := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{create("cq"), finish("quota")}}
 	e.Model = quota
 	accept(t, e, scope, 10, "ещё одно напоминание", true)

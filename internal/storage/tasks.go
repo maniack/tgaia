@@ -59,7 +59,7 @@ func (a *AgentStore) putTask(ctx context.Context, task agent.Task, expected int6
 		}
 	}
 	if expected == 0 {
-		result := a.db.WithContext(ctx).Exec(`INSERT INTO scheduled_tasks (id,agent_id,bot_id,chat_id,thread_id,user_id,prompt,run_at,interval_ms,active) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING`, task.ID, task.AgentID, task.BotID, task.ChatID, task.ThreadID, task.UserID, task.Prompt, task.RunAt, task.IntervalMS, task.Active)
+		result := a.db.WithContext(ctx).Exec(`INSERT INTO scheduled_tasks (id,agent_id,bot_id,chat_id,thread_id,user_id,prompt,run_at,interval_ms,active,max_runs,until_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING`, task.ID, task.AgentID, task.BotID, task.ChatID, task.ThreadID, task.UserID, task.Prompt, task.RunAt, task.IntervalMS, task.Active, task.MaxRuns, task.UntilAt)
 		if result.Error != nil {
 			return errors.New("creating task failed")
 		}
@@ -71,7 +71,7 @@ func (a *AgentStore) putTask(ctx context.Context, task agent.Task, expected int6
 		}
 		return nil
 	}
-	result := a.db.WithContext(ctx).Exec(`UPDATE scheduled_tasks SET prompt=?,run_at=?,interval_ms=?,active=?,version=version+1 WHERE id=? AND version=? AND agent_id=? AND bot_id=? AND chat_id=? AND thread_id=? AND user_id=?`, task.Prompt, task.RunAt, task.IntervalMS, task.Active, task.ID, expected, task.AgentID, task.BotID, task.ChatID, task.ThreadID, task.UserID)
+	result := a.db.WithContext(ctx).Exec(`UPDATE scheduled_tasks SET prompt=?,run_at=?,interval_ms=?,active=?,max_runs=?,until_at=?,version=version+1 WHERE id=? AND version=? AND agent_id=? AND bot_id=? AND chat_id=? AND thread_id=? AND user_id=?`, task.Prompt, task.RunAt, task.IntervalMS, task.Active, task.MaxRuns, task.UntilAt, task.ID, expected, task.AgentID, task.BotID, task.ChatID, task.ThreadID, task.UserID)
 	if result.Error != nil {
 		return errors.New("updating task failed")
 	}
@@ -139,9 +139,18 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
 					return err
 				}
 				if pending == 0 {
-					payload, _ := json.Marshal(agent.JobPayload{Prompt: task.Prompt, TaskID: task.ID, DueAt: task.RunAt, IntervalMS: task.IntervalMS})
-					if _, err := q.Enqueue(ctx, queue.Input{Scope: scope, ActorUserID: task.UserID, Key: fmt.Sprintf("task:%s:%d:%d", task.ID, task.Version, task.RunAt), Kind: "respond", Payload: payload, MaxAttempts: 3, Priority: 1}); err != nil {
-						return err
+					// Enforce max_runs and until_at before firing.
+					if (task.MaxRuns > 0 && task.RunCount >= task.MaxRuns) || (task.UntilAt > 0 && now >= task.UntilAt) {
+						task.Active = false
+					} else {
+						payload, _ := json.Marshal(agent.JobPayload{Prompt: task.Prompt, TaskID: task.ID, DueAt: task.RunAt, IntervalMS: task.IntervalMS})
+						if _, err := q.Enqueue(ctx, queue.Input{Scope: scope, ActorUserID: task.UserID, Key: fmt.Sprintf("task:%s:%d:%d", task.ID, task.Version, task.RunAt), Kind: "respond", Payload: payload, MaxAttempts: 3, Priority: 1}); err != nil {
+							return err
+						}
+						task.RunCount++
+						if task.MaxRuns > 0 && task.RunCount >= task.MaxRuns {
+							task.Active = false
+						}
 					}
 				}
 			} else if errors.Is(err, access.ErrDenied) || errors.Is(err, access.ErrBlocked) || errors.Is(err, ErrChatBlocked) {
@@ -154,7 +163,7 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
 			} else {
 				task.RunAt += (1 + (now-task.RunAt)/task.IntervalMS) * task.IntervalMS
 			}
-			if err := tx.Exec("UPDATE scheduled_tasks SET active=?,run_at=?,version=version+1 WHERE id=?", task.Active, task.RunAt, task.ID).Error; err != nil {
+			if err := tx.Exec("UPDATE scheduled_tasks SET active=?,run_at=?,run_count=?,version=version+1 WHERE id=?", task.Active, task.RunAt, task.RunCount, task.ID).Error; err != nil {
 				return err
 			}
 		}
