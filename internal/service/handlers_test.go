@@ -323,7 +323,10 @@ func TestReplyArgumentsAreValidated(t *testing.T) {
 	}
 }
 
-func TestEditedMemoryCanBeCompactedAgain(t *testing.T) {
+func TestEditedMessageDoesNotInvalidateMemory(t *testing.T) {
+	// Memory is the past: editing a bot message must not delete the existing
+	// background episode. memory_revision still advances so a stale compaction
+	// job is rejected.
 	e, model, _, scope := engineFixture(t)
 	ctx := context.Background()
 	accept(t, e, scope, 1, "hello", true)
@@ -346,26 +349,17 @@ func TestEditedMemoryCanBeCompactedAgain(t *testing.T) {
 	if err := e.DB.Queue().Complete(ctx, first.Receipt); err != nil {
 		t.Fatal(err)
 	}
+	revBefore, _ := e.DB.Agent().MemoryRevision(ctx, scope)
 	if err := e.DB.Agent().SyncMessage(ctx, scope, 10001, "corrected answer", false); err != nil {
 		t.Fatal(err)
 	}
 	c, err := e.DB.Agent().Context(ctx, scope, 0, 200)
-	if err != nil || c.Summary.Content != "" {
-		t.Fatal("old summary survived edit")
+	if err != nil || c.Summary.Content != "old summary" {
+		t.Fatal("edit must not invalidate existing memory", err)
 	}
-	if err := e.DB.Agent().Tick(ctx, time.Nanosecond); err != nil {
-		t.Fatal(err)
-	}
-	next := take(t, e, "compact")
-	if next.ID == first.ID {
-		t.Fatal("reused completed compaction")
-	}
-	model.reply = "new summary"
-	if err := e.CompactBackground(ctx, *next); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(model.input[1].Content, "corrected answer") {
-		t.Fatal("compaction lost correction")
+	revAfter, _ := e.DB.Agent().MemoryRevision(ctx, scope)
+	if revAfter <= revBefore {
+		t.Fatal("memory_revision did not advance after edit")
 	}
 }
 

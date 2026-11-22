@@ -152,9 +152,6 @@ func (a *AgentStore) Accept(ctx context.Context, in agent.Incoming) error {
 			if err := tx.Exec("UPDATE conversation_messages SET text=?,attachments=?,media_text='',update_id=?,reply_to_message_id=? WHERE id=?", in.Text, string(attachments), in.UpdateID, in.ReplyMessageID, old.ID).Error; err != nil {
 				return err
 			}
-			if err := memoryScoped(tx.Table("memory_episodes"), in.Scope).Where("through_id>=?", old.ID).Delete(&struct{}{}).Error; err != nil {
-				return err
-			}
 			if err := scoped(tx.Table("chat_directory"), in.Scope).Update("memory_revision", gorm.Expr("memory_revision+1")).Error; err != nil {
 				return err
 			}
@@ -890,9 +887,6 @@ func (a *AgentStore) SyncMessage(ctx context.Context, s chat.Scope, id int64, te
 		}
 		if err := memoryScoped(tx.Table("conversation_messages"), s).Where("id=?", row.ID).Update("text", text).Error; err != nil {
 			return errors.New("updating history failed")
-		}
-		if err := memoryScoped(tx.Table("memory_episodes"), s).Where("through_id>=?", row.ID).Delete(&struct{}{}).Error; err != nil {
-			return errors.New("invalidating summary failed")
 		}
 		if err := scoped(tx.Table("chat_directory"), s).Update("memory_revision", gorm.Expr("memory_revision+1")).Error; err != nil {
 			return errors.New("advancing memory revision failed")

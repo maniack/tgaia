@@ -276,24 +276,28 @@ func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 			if err := db.Agent().Accept(ctx, in); err != nil {
 				t.Fatal(err)
 			}
+			// Memory is the past: editing a message does not invalidate existing
+			// episodes. The edit will appear in the next compaction cycle instead.
 			c, err = db.Agent().Context(ctx, first, 0, 50)
-			if err != nil || c.Summary.Content != "" || len(c.Messages) != 2 || c.Messages[0].Text != "corrected" {
-				t.Fatal("edit not reflected", err)
+			if err != nil || c.Summary.Content != "old summary" || len(c.Messages) != 0 {
+				t.Fatal("edit must not invalidate existing memory", err)
 			}
-			if _, err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[1].ID, "stale", 0); err == nil {
+			// Stale compaction is still rejected: memory_revision advanced on edit.
+			if _, err := db.Agent().SaveSummary(ctx, *job, 0, 2, "stale", 0); err == nil {
 				t.Fatal("stale compaction committed")
 			}
 			if current, err := db.Agent().ResponseCurrent(ctx, first, 1, 1); err != nil || current {
 				t.Fatal("stale response allowed")
 			}
+			// Out-of-order edit (older update_id) is silently ignored.
 			in.UpdateID = 0
 			in.Text = "late old edit"
 			if err := db.Agent().Accept(ctx, in); err != nil {
 				t.Fatal(err)
 			}
 			c, _ = db.Agent().Context(ctx, first, 0, 50)
-			if c.Messages[0].Text != "corrected" {
-				t.Fatal("out of order edit replaced latest")
+			if c.Summary.Content != "old summary" {
+				t.Fatal("out of order edit corrupted memory")
 			}
 			if err := db.Queue().Complete(ctx, job.Receipt); err != nil {
 				t.Fatal(err)
