@@ -82,81 +82,97 @@ func (p *Provider) Open(ctx context.Context, scope chat.Scope) (Session, error) 
 		if !server.Enabled || !allows(server.Bots, p.Bots[scope.BotID]) {
 			continue
 		}
-		transport, cleanup, err := connectTransport(ctx, server, s.timeout)
-		if err != nil {
-			s.Close()
-			return nil, err
+		if err := p.openServer(ctx, s, scope, server); err != nil {
+			slog.Warn("MCP server skipped", "server", server.Name, "error", err)
 		}
-		s.cleanups = append(s.cleanups, cleanup)
-		// Never advertise sampling, roots, elicitation or credential callbacks.
-		client := mcp.NewClient(&mcp.Implementation{Name: "tgaia", Version: "poc"}, &mcp.ClientOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-		connectCtx, closeConnection := context.WithCancel(ctx)
-		// SSE owns a long-lived GET using the Connect context. Keep it alive
-		// after initialization; only the initialization timer is stopped.
-		timer := time.AfterFunc(s.timeout, closeConnection)
-		cs, err := client.Connect(connectCtx, transport, nil)
-		timer.Stop()
-		s.cleanups = append(s.cleanups, closeConnection)
-		if err != nil {
-			s.Close()
-			return nil, errors.New("MCP connection failed")
-		}
-		s.sessions = append(s.sessions, cs)
-		listCtx, cancel := context.WithTimeout(ctx, s.timeout)
-		count := 0
-		for tool, err := range cs.Tools(listCtx, nil) {
-			count++
-			if err != nil || count > 256 {
-				cancel()
-				s.Close()
-				return nil, errors.New("MCP tool discovery failed or exceeded limit")
-			}
-			if !allows(server.Tools, tool.Name) {
-				continue
-			}
-			schema, err := json.Marshal(tool.InputSchema)
-			if err != nil || len(schema) > 16000 || len(tool.Description) > 4000 || len(tool.Name) > 256 {
-				cancel()
-				s.Close()
-				return nil, errors.New("MCP tool definition exceeds limit")
-			}
-			// Some OpenAI-compatible providers require properties even for an
-			// empty-object schema. Adding it preserves JSON Schema semantics.
-			var shape map[string]json.RawMessage
-			if json.Unmarshal(schema, &shape) != nil || shape == nil {
-				cancel()
-				s.Close()
-				return nil, errors.New("invalid MCP schema object")
-			}
-			if _, ok := shape["properties"]; !ok {
-				shape["properties"] = json.RawMessage(`{}`)
-				schema, _ = json.Marshal(shape)
-			}
-			var input jsonschema.Schema
-			if json.Unmarshal(schema, &input) != nil || input.Type != "object" {
-				cancel()
-				s.Close()
-				return nil, errors.New("invalid MCP input schema")
-			}
-			resolved, err := input.Resolve(nil) // No remote schema fetches.
-			if err != nil {
-				cancel()
-				s.Close()
-				return nil, errors.New("unsupported MCP input schema")
-			}
-			name := toolName(server.Name, tool.Name, func(n string) bool { _, taken := s.entries[n]; return taken })
-			s.entries[name] = entry{session: cs, name: tool.Name, schema: resolved, permit: func() bool { return p.Permit == nil || p.Permit(scope, server.Name, tool.Name) }}
-			s.tools = append(s.tools, llm.Tool{Type: "function", Function: llm.ToolFunction{Name: name, Description: server.Name + " / " + tool.Name + ": " + tool.Description, Parameters: schema}})
-			if len(s.tools) > 64 {
-				cancel()
-				s.Close()
-				return nil, errors.New("too many allowed MCP tools")
-			}
-		}
-		cancel()
 	}
 	sort.Slice(s.tools, func(i, j int) bool { return s.tools[i].Function.Name < s.tools[j].Function.Name })
 	return s, nil
+}
+
+// openServer tries to connect one MCP server and append its tools to s. On any
+// error it rolls back the partial state it added to s and returns the error so
+// the caller can log it and continue with other servers.
+func (p *Provider) openServer(ctx context.Context, s *session, scope chat.Scope, server config.MCPServer) (retErr error) {
+	prevCleanups := len(s.cleanups)
+	prevSessions := len(s.sessions)
+	prevTools := len(s.tools)
+	rollback := func() {
+		for _, fn := range s.cleanups[prevCleanups:] {
+			fn()
+		}
+		for _, cs := range s.sessions[prevSessions:] {
+			_ = cs.Close()
+		}
+		s.cleanups = s.cleanups[:prevCleanups]
+		s.sessions = s.sessions[:prevSessions]
+		s.tools = s.tools[:prevTools]
+	}
+	defer func() {
+		if retErr != nil {
+			rollback()
+		}
+	}()
+
+	transport, cleanup, err := connectTransport(ctx, server, s.timeout)
+	if err != nil {
+		return err
+	}
+	s.cleanups = append(s.cleanups, cleanup)
+	// Never advertise sampling, roots, elicitation or credential callbacks.
+	client := mcp.NewClient(&mcp.Implementation{Name: "tgaia", Version: "poc"}, &mcp.ClientOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	connectCtx, closeConnection := context.WithCancel(ctx)
+	// SSE owns a long-lived GET using the Connect context. Keep it alive
+	// after initialization; only the initialization timer is stopped.
+	timer := time.AfterFunc(s.timeout, closeConnection)
+	cs, err := client.Connect(connectCtx, transport, nil)
+	timer.Stop()
+	s.cleanups = append(s.cleanups, closeConnection)
+	if err != nil {
+		return errors.New("MCP connection failed")
+	}
+	s.sessions = append(s.sessions, cs)
+	listCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	count := 0
+	for tool, err := range cs.Tools(listCtx, nil) {
+		count++
+		if err != nil || count > 256 {
+			return errors.New("MCP tool discovery failed or exceeded limit")
+		}
+		if !allows(server.Tools, tool.Name) {
+			continue
+		}
+		schema, err := json.Marshal(tool.InputSchema)
+		if err != nil || len(schema) > 16000 || len(tool.Description) > 4000 || len(tool.Name) > 256 {
+			return errors.New("MCP tool definition exceeds limit")
+		}
+		// Some OpenAI-compatible providers require properties even for an
+		// empty-object schema. Adding it preserves JSON Schema semantics.
+		var shape map[string]json.RawMessage
+		if json.Unmarshal(schema, &shape) != nil || shape == nil {
+			return errors.New("invalid MCP schema object")
+		}
+		if _, ok := shape["properties"]; !ok {
+			shape["properties"] = json.RawMessage(`{}`)
+			schema, _ = json.Marshal(shape)
+		}
+		var input jsonschema.Schema
+		if json.Unmarshal(schema, &input) != nil || input.Type != "object" {
+			return errors.New("invalid MCP input schema")
+		}
+		resolved, err := input.Resolve(nil) // No remote schema fetches.
+		if err != nil {
+			return errors.New("unsupported MCP input schema")
+		}
+		name := toolName(server.Name, tool.Name, func(n string) bool { _, taken := s.entries[n]; return taken })
+		s.entries[name] = entry{session: cs, name: tool.Name, schema: resolved, permit: func() bool { return p.Permit == nil || p.Permit(scope, server.Name, tool.Name) }}
+		s.tools = append(s.tools, llm.Tool{Type: "function", Function: llm.ToolFunction{Name: name, Description: server.Name + " / " + tool.Name + ": " + tool.Description, Parameters: schema}})
+		if len(s.tools) > 64 {
+			return errors.New("too many allowed MCP tools")
+		}
+	}
+	return nil
 }
 
 // maxToolName is the function-name limit shared by OpenAI-compatible APIs.
