@@ -871,6 +871,21 @@ func (a *AgentStore) ResponseCurrent(ctx context.Context, s chat.Scope, id, upda
 	err := memoryScoped(a.db.WithContext(ctx).Table("conversation_messages"), s).Where("message_id=? AND update_id=?", id, update).Count(&count).Error
 	return count == 1, err
 }
+
+// HasBotReplyAfterMessage reports whether the bot has already sent a message
+// after the given user message. Used to suppress respond jobs when a task run
+// has already covered the same message.
+func (a *AgentStore) HasBotReplyAfterMessage(ctx context.Context, s chat.Scope, messageID int64) (bool, error) {
+	var row struct{ ID int64 }
+	if err := memoryScoped(a.db.WithContext(ctx).Table("conversation_messages"), s).
+		Where("message_id=? AND role='user'", messageID).Select("id").Limit(1).Scan(&row).Error; err != nil || row.ID == 0 {
+		return false, err
+	}
+	var count int64
+	err := memoryScoped(a.db.WithContext(ctx).Table("conversation_messages"), s).
+		Where("role='assistant' AND id > ?", row.ID).Limit(1).Count(&count).Error
+	return count > 0, err
+}
 func (a *AgentStore) SaveMediaText(ctx context.Context, job queue.Job, id, update int64, text string) error {
 	if len(text) > 32000 {
 		return errors.New("attachment text too large")

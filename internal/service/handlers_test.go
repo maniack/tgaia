@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -365,5 +366,80 @@ func TestEditedMemoryCanBeCompactedAgain(t *testing.T) {
 	}
 	if !strings.Contains(model.input[1].Content, "corrected answer") {
 		t.Fatal("compaction lost correction")
+	}
+}
+
+// When a task run sends a reply after message M, the queued respond job for M
+// must skip to avoid a duplicate answer in the same chat.
+// This applies to group chats with group_response="all", where messages that
+// don't explicitly address the bot (payload.Addressed=false) still get a
+// respond job. A task run seeing those messages should suppress the respond job.
+func TestRespondJobSkippedIfTaskAlreadyReplied(t *testing.T) {
+	e, _, sender, scope := engineFixture(t)
+	ctx := context.Background()
+
+	// Seed: Accept a silent group message to create the chat_directory row (no
+	// respond job because GroupResponse defaults to "mentions" and Respond is false).
+	if err := e.DB.Agent().Accept(ctx, agent.Incoming{
+		Scope: scope, UpdateID: 999, MessageID: 999, UserID: 7,
+		ChatType: "group", Text: "seed", SentAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure group_response="all" so Accept produces an unaddressed respond job
+	// (Addressed=false in payload). That is the scenario where task-run dedup fires.
+	b, err := e.DB.Agent().ChatBehavior(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.GroupResponse = "all"
+	if err := e.DB.Agent().SetChatBehavior(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	// Enqueue the task-style respond job first so the queue assigns it a lower ID
+	// and claims it before the respond job for M.
+	taskPayload, _ := json.Marshal(agent.JobPayload{Prompt: "daily reminder", TaskID: "task-1"})
+	if _, err := e.DB.Queue().Enqueue(ctx, queue.Input{
+		Scope: scope, ActorUserID: 7, Key: "task:task-1:1:0", Kind: "respond",
+		Payload: taskPayload, MaxAttempts: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Accept a group message; with group_response="all" and Respond=false (default),
+	// Accept overrides Respond to true but keeps Addressed=false in the job payload.
+	if err := e.DB.Agent().Accept(ctx, agent.Incoming{
+		Scope: scope, UpdateID: 1, MessageID: 1, UserID: 7,
+		ChatType: "group", Text: "question", SentAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run the task job (lower ID → claimed first). It inserts a bot reply after M.
+	taskJob := take(t, e, "respond")
+	var jp agent.JobPayload
+	if err := json.Unmarshal(taskJob.Payload, &jp); err != nil || jp.Prompt == "" {
+		t.Fatal("expected task job to be claimed first")
+	}
+	if err := e.Respond(ctx, *taskJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DB.Queue().Complete(ctx, taskJob.Receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	// The respond job for M must not send another reply.
+	callsBefore := sender.calls
+	respondJob := take(t, e, "respond")
+	if err := e.Respond(ctx, *respondJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DB.Queue().Complete(ctx, respondJob.Receipt); err != nil {
+		t.Fatal(err)
+	}
+	if sender.calls != callsBefore {
+		t.Fatalf("respond job sent %d extra message(s) after task already replied", sender.calls-callsBefore)
 	}
 }

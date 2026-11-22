@@ -315,6 +315,18 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		return err
 	}
 	if stored == "" {
+		// If a task run already replied after the target message, skip to avoid
+		// a duplicate answer. Only applies to non-task, non-edited, non-addressed
+		// jobs: tasks must run regardless, edits always deserve a re-answer, and
+		// explicit mentions mean the user is waiting for the bot specifically.
+		if payload.MessageID > 0 && payload.Prompt == "" && !payload.Edited && !payload.Addressed {
+			if answered, checkErr := store.HasBotReplyAfterMessage(ctx, job.Scope, payload.MessageID); checkErr == nil && answered {
+				e.log().Info("reply skipped: task already replied after this message",
+					"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+					"chat_id", job.Scope.ChatID, "message_id", payload.MessageID)
+				return nil
+			}
+		}
 		stopTyping := e.startTyping(ctx, job, sender)
 		defer stopTyping()
 		var history agent.Context
