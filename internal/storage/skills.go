@@ -246,3 +246,49 @@ func VirtualPaths(rows []VirtualFile, namespace string) []string {
 	sort.Strings(paths)
 	return paths
 }
+
+// VirtualFileStat holds file metadata without content.
+type VirtualFileStat struct {
+	Path      string `json:"path"`
+	Namespace string `json:"namespace"`
+	Bytes     int64  `json:"bytes"`
+	Version   int64  `json:"version"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+func (a *AgentStore) StatVirtualFile(ctx context.Context, scope chat.Scope, userID int64, rawPath string) (VirtualFileStat, error) {
+	var row VirtualFileStat
+	ns, filePath, err := cleanVirtualPath(rawPath)
+	if err != nil || (ns == "user" && userID <= 0) {
+		return row, errors.New("invalid virtual file")
+	}
+	if err := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope, userID, ns).
+		Select("path, namespace, LENGTH(content) AS bytes, version, created_at, updated_at").
+		Where("path=?", filePath).Take(&row).Error; err != nil {
+		return row, errors.New("virtual file not found")
+	}
+	return row, nil
+}
+
+// VirtualNamespaceUsage holds file count and total bytes for one namespace.
+type VirtualNamespaceUsage struct {
+	Files int64 `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
+func (a *AgentStore) VirtualUsage(ctx context.Context, scope chat.Scope, userID int64) (map[string]VirtualNamespaceUsage, error) {
+	result := map[string]VirtualNamespaceUsage{"user": {}, "chat": {}, "bot": {}}
+	for _, ns := range []string{"user", "chat", "bot"} {
+		var row struct {
+			Files int64
+			Bytes int64
+		}
+		if err := virtualScope(a.db.WithContext(ctx).Table("virtual_files"), scope, userID, ns).
+			Select("COUNT(*) AS files, COALESCE(SUM(LENGTH(content)), 0) AS bytes").Scan(&row).Error; err != nil {
+			return nil, errors.New("virtual usage query failed")
+		}
+		result[ns] = VirtualNamespaceUsage{Files: row.Files, Bytes: row.Bytes}
+	}
+	return result, nil
+}

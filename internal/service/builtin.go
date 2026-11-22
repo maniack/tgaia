@@ -49,6 +49,8 @@ const (
 	toolVFSRead        = "vfs_read"
 	toolVFSWrite       = "vfs_write"
 	toolVFSDelete      = "vfs_delete"
+	toolVFSStat        = "vfs_stat"
+	toolVFSQuota       = "vfs_quota"
 )
 
 var whenSchema = `{"type":"object","additionalProperties":false,"properties":{
@@ -91,6 +93,8 @@ func (b *builtinTools) specs() []llm.Tool {
 		tool(toolSkillRun, "Run an active skill by name with a JSON input string. The skill is sandboxed and may use its scoped virtual filesystem.", `{"type":"object","additionalProperties":false,"properties":{"name":{"type":"string"},"input_json":{"type":"string","maxLength":64000}},"required":["name","input_json"]}`),
 		tool(toolVFSList, "List files in one virtual filesystem namespace scoped to the current user, chat or bot.", `{"type":"object","additionalProperties":false,"properties":{"namespace":{"type":"string","enum":["user","chat","bot"]},"prefix":{"type":"string","maxLength":512}},"required":["namespace","prefix"]}`),
 		tool(toolVFSRead, "Read a text file from /user, /chat or /bot virtual storage. This never accesses the host filesystem.", `{"type":"object","additionalProperties":false,"properties":{"path":{"type":"string","maxLength":512}},"required":["path"]}`),
+		tool(toolVFSStat, "Get the size, version and timestamps of a virtual file without reading its content. Use to check whether a file exists or when it was last updated.", `{"type":"object","additionalProperties":false,"properties":{"path":{"type":"string","maxLength":512}},"required":["path"]}`),
+		tool(toolVFSQuota, "Show file count and total bytes stored in each virtual filesystem namespace (user, chat, bot) for the current scope. Use to check available space before writing.", `{"type":"object","additionalProperties":false,"properties":{}}`),
 	}
 	if b.scheduled {
 		return tools
@@ -133,7 +137,7 @@ func (b *builtinTools) specs() []llm.Tool {
 // to a hidden one gets a specific refusal rather than an MCP lookup.
 func (b *builtinTools) handles(name string) bool {
 	switch name {
-	case toolTaskList, toolTaskCreate, toolTaskUpdate, toolTaskDelete, toolMemoryList, toolMemorySave, toolMemoryUpdate, toolMemoryDelete, toolMessageList, toolMessageSend, toolMessageEdit, toolMessageDelete, toolModerateDelete, toolModerateBan, toolModerateUnban, toolModerateMute, toolModeratePin, toolSkillList, toolSkillCreate, toolSkillUpdate, toolSkillTest, toolSkillRun, toolSkillDelete, toolVFSList, toolVFSRead, toolVFSWrite, toolVFSDelete:
+	case toolTaskList, toolTaskCreate, toolTaskUpdate, toolTaskDelete, toolMemoryList, toolMemorySave, toolMemoryUpdate, toolMemoryDelete, toolMessageList, toolMessageSend, toolMessageEdit, toolMessageDelete, toolModerateDelete, toolModerateBan, toolModerateUnban, toolModerateMute, toolModeratePin, toolSkillList, toolSkillCreate, toolSkillUpdate, toolSkillTest, toolSkillRun, toolSkillDelete, toolVFSList, toolVFSRead, toolVFSWrite, toolVFSDelete, toolVFSStat, toolVFSQuota:
 		return true
 	}
 	return false
@@ -576,9 +580,27 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 		}
 		file, err := store.ReadVirtualFile(ctx, b.job.Scope, b.job.ActorUserID, in.Path)
 		if err != nil {
-			return toolError("Virtual file not found in the current scope."), nil
+			return toolError("Virtual file not found: " + in.Path), nil
 		}
 		return toolResult(map[string]any{"file": file}), nil
+	case toolVFSStat:
+		var in struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal([]byte(args), &in) != nil {
+			return toolError("path is required."), nil
+		}
+		stat, err := store.StatVirtualFile(ctx, b.job.Scope, b.job.ActorUserID, in.Path)
+		if err != nil {
+			return toolError("Virtual file not found: " + in.Path), nil
+		}
+		return toolResult(map[string]any{"stat": stat}), nil
+	case toolVFSQuota:
+		usage, err := store.VirtualUsage(ctx, b.job.Scope, b.job.ActorUserID)
+		if err != nil {
+			return "", err
+		}
+		return toolResult(map[string]any{"usage": usage, "limit_bytes_per_file": 256000}), nil
 	case toolVFSWrite:
 		var in struct {
 			Path    string `json:"path"`
@@ -588,7 +610,7 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			return toolError("path and content are required."), nil
 		}
 		if err := store.ApplyVirtualChanges(ctx, b.job.Scope, b.job.ActorUserID, []storage.VirtualFileChange{{Path: in.Path, Content: &in.Content}}); err != nil {
-			return toolError("Invalid virtual path or file exceeds limits."), nil
+			return toolError("Invalid path or content exceeds the 256 KB limit: " + in.Path), nil
 		}
 		return toolResult(map[string]any{"written": in.Path, "bytes": len(in.Content)}), nil
 	case toolVFSDelete:
@@ -599,7 +621,7 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			return toolError("path is required."), nil
 		}
 		if err := store.ApplyVirtualChanges(ctx, b.job.Scope, b.job.ActorUserID, []storage.VirtualFileChange{{Path: in.Path}}); err != nil {
-			return toolError("Invalid virtual path."), nil
+			return toolError("Invalid virtual path: " + in.Path), nil
 		}
 		return toolResult(map[string]any{"deleted": in.Path}), nil
 	case toolMessageSend:
