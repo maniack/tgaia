@@ -47,10 +47,31 @@ func (b *BotRegistry) Register(ctx context.Context, agentID string, botID int64,
 		return nil
 	})
 	if err != nil {
-		return false, errors.New("bot registration failed or conflicts with existing owner")
+		return false, err
 	}
 	return applied, nil
 }
+func (b *BotRegistry) AvatarCache(ctx context.Context, agentID string, botID int64) (uniqueID, description string, err error) {
+	var row struct {
+		AvatarUniqueID    string
+		AvatarDescription string
+	}
+	if err = b.db.WithContext(ctx).Table("telegram_bots").
+		Where("agent_id=? AND bot_id=?", agentID, botID).
+		Select("avatar_unique_id, avatar_description").
+		Take(&row).Error; err != nil {
+		return "", "", err
+	}
+	return row.AvatarUniqueID, row.AvatarDescription, nil
+}
+
+func (b *BotRegistry) SaveAvatarCache(ctx context.Context, agentID string, botID int64, uniqueID, description string) error {
+	return b.db.WithContext(ctx).Exec(
+		"UPDATE telegram_bots SET avatar_unique_id=?, avatar_description=? WHERE agent_id=? AND bot_id=?",
+		uniqueID, description, agentID, botID,
+	).Error
+}
+
 func (b *BotRegistry) CredentialRef(ctx context.Context, agentID string, botID int64) (string, error) {
 	if !validAgent(agentID) || botID <= 0 {
 		return "", errors.New("invalid bot identity")

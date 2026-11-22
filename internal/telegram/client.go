@@ -295,7 +295,14 @@ func (c *Client) callRaw(ctx context.Context, method, contentType string, data [
 	req.Header.Set("Content-Type", contentType)
 	response, err := c.http.Do(req)
 	if err != nil {
-		return errors.New("Telegram request failed; outcome may be unknown")
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("Telegram %s: timeout; outcome may be unknown", method)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("Telegram %s: canceled; outcome may be unknown", method)
+		default:
+			return fmt.Errorf("Telegram %s: network error; outcome may be unknown", method)
+		}
 	}
 	defer response.Body.Close()
 	data, err = io.ReadAll(io.LimitReader(response.Body, 1<<20+1))

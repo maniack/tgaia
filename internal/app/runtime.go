@@ -130,9 +130,17 @@ func (r *runtime) loadBotIdentity(ctx context.Context, cfg config.App, model ser
 	}
 	identity.AvatarPresent = true
 	identity.AvatarUniqueID = profile.Avatar.UniqueID
+	// In-memory cache: same avatar, same run.
 	if identity.AvatarUniqueID != "" && identity.AvatarUniqueID == previous.AvatarUniqueID && previous.AvatarDescription != "" {
 		identity.AvatarDescription = previous.AvatarDescription
 		return profile, identity, nil
+	}
+	// DB cache: survives restarts; skip the LLM call when the avatar hasn't changed.
+	if identity.AvatarUniqueID != "" {
+		if uid, desc, err := r.db.Bots().AvatarCache(ctx, cfg.AgentID, profile.ID); err == nil && uid == identity.AvatarUniqueID && desc != "" {
+			identity.AvatarDescription = desc
+			return profile, identity, nil
+		}
 	}
 	data, mime, fetchErr := client.FetchProfilePhoto(ctx, *profile.Avatar)
 	if fetchErr != nil {
@@ -143,7 +151,14 @@ func (r *runtime) loadBotIdentity(ctx context.Context, cfg config.App, model ser
 	}
 	system, err := service.BotPrompt(ctx, r.db, cfg.AgentID, profile.ID, cfg.DefaultPromptFile, cfg.Limit("system_prompt_bytes"))
 	if err == nil {
-		identity.AvatarDescription, err = describeBotAvatar(ctx, model, system, identity, data, mime)
+		// Use an independent context so a slow LLM doesn't exhaust the prepareCtx
+		// deadline and prevent bot registration from completing afterwards.
+		llmCtx, llmCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer llmCancel()
+		identity.AvatarDescription, err = describeBotAvatar(llmCtx, model, system, identity, data, mime)
+		if err == nil && identity.AvatarDescription != "" {
+			_ = r.db.Bots().SaveAvatarCache(ctx, cfg.AgentID, profile.ID, identity.AvatarUniqueID, identity.AvatarDescription)
+		}
 	}
 	if err != nil {
 		if r.log != nil {
