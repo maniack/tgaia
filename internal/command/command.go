@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -56,7 +55,7 @@ func New(out, errOut io.Writer) *cli.Command {
 		Before: func(ctx context.Context, cmd *cli.Command) (next context.Context, result error) {
 			defer func() {
 				if result != nil {
-					result = safeError{result}
+					result = safeError{error: result}
 				}
 			}()
 			if err := config.ValidateEnv(os.Environ()); err != nil {
@@ -85,40 +84,40 @@ func New(out, errOut io.Writer) *cli.Command {
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			if cmd.Args().Len() != 0 {
-				return safeError{errors.New("unknown command (see --help)")}
+				return safeError{error: errors.New("unknown command (see --help)")}
 			}
 			appConfig, err := loadApp()
 			if err != nil {
-				return safeError{err}
+				return safeError{phase: "config", error: err}
 			}
 			if err = migrate(ctx); err != nil {
-				return safeError{err}
+				return safeError{phase: "migrate", error: err}
 			}
 			if err = serve(ctx, appConfig); err != nil {
-				return safeError{err}
+				return safeError{phase: "serve", error: err}
 			}
 			return nil
 		},
 		Commands: []*cli.Command{
 			{Name: "serve", Usage: "run without migrations (for production after db-migrate)", Action: func(ctx context.Context, cmd *cli.Command) error {
 				if cmd.Args().Len() != 0 {
-					return safeError{errors.New("serve does not accept arguments")}
+					return safeError{error: errors.New("serve does not accept arguments")}
 				}
 				appConfig, err := loadApp()
 				if err != nil {
-					return safeError{err}
+					return safeError{phase: "config", error: err}
 				}
 				if err := serve(ctx, appConfig); err != nil {
-					return safeError{err}
+					return safeError{phase: "serve", error: err}
 				}
 				return nil
 			}},
 			{Name: "db-migrate", Usage: "apply versioned database migrations explicitly", Action: func(ctx context.Context, cmd *cli.Command) error {
 				if cmd.Args().Len() != 0 {
-					return safeError{errors.New("db-migrate does not accept arguments")}
+					return safeError{error: errors.New("db-migrate does not accept arguments")}
 				}
 				if err := migrate(ctx); err != nil {
-					return safeError{err}
+					return safeError{phase: "migrate", error: err}
 				}
 				return nil
 			}},
@@ -134,10 +133,10 @@ func New(out, errOut io.Writer) *cli.Command {
 				}
 				db, err := storage.Open(ctx, cfg)
 				if err != nil {
-					return safeError{err}
+					return safeError{phase: "db-check", error: err}
 				}
 				if err := db.Close(); err != nil {
-					return safeError{err}
+					return safeError{phase: "db-check", error: err}
 				}
 				slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: cfg.LogLevel})).InfoContext(ctx, "database connection verified", "driver", cfg.Database.Driver)
 				return nil
@@ -149,10 +148,16 @@ func New(out, errOut io.Writer) *cli.Command {
 // Run deliberately sanitizes parser errors too: third-party flag parsing can
 // echo arbitrary input, including a secret accidentally supplied as a flag.
 func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
+	start := time.Now()
 	if err := New(out, io.Discard).Run(ctx, args); err != nil {
 		var safe safeError
 		if errors.As(err, &safe) {
-			_, _ = fmt.Fprintln(errOut, "tgaia:", safe.Error())
+			handler := slog.NewJSONHandler(errOut, &slog.HandlerOptions{Level: slog.LevelError})
+			attrs := []any{"elapsed_ms", time.Since(start).Milliseconds()}
+			if safe.phase != "" {
+				attrs = append(attrs, "phase", safe.phase)
+			}
+			slog.New(handler).ErrorContext(ctx, safe.Error(), attrs...)
 			return safe
 		}
 		_, _ = io.WriteString(errOut, "tgaia: invalid command or flag value (see --help)\n")
@@ -161,5 +166,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	return nil
 }
 
-// safeError marks diagnostics that contain no untrusted input.
-type safeError struct{ error }
+// safeError marks diagnostics that contain no untrusted input, with optional phase for startup errors.
+type safeError struct {
+	phase string
+	error
+}
