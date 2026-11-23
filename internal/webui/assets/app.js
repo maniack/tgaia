@@ -175,17 +175,20 @@ function renderJobs(items){
   const row=element('tr');
   const jobCell=element('div',`Job ${item.id}`);jobCell.append(element('small',jobKindLabels[item.kind]||item.kind));cell(row,jobCell);
   cell(row,`${item.agent_id} · bot ${item.bot_id} · chat ${item.chat_id}${item.thread_id?' · topic '+item.thread_id:''}`);
-  cell(row,badge(item.status,item.status==='dead'||item.status==='retry'));
+  const statusBadge=element('span');statusBadge.append(badge(item.status,item.status==='dead'||item.status==='retry'));if(item.scope_paused)statusBadge.append(badge('paused',true,'warn'));cell(row,statusBadge);
   const desc=element('div',jobDescription(item));
   if(item.failure_class)desc.append(element('small',failureLabel(item)));
   if(item.payload)desc.append(detailBlock('Payload',item.payload));
   cell(row,desc);
   cell(row,item.created_at?fmtTime(Number(item.created_at)):'');
+  const scope={agent_id:item.agent_id,bot_id:item.bot_id,chat_id:item.chat_id};
   const acts=[];
   if(item.status==='dead')acts.push({label:'Replay job',action:async()=>{if(await confirmAsync(`Replay job ${item.id}?`,'Completed steps are reused; only unfinished work runs again.','Replay')){await api('/api/queue-replay','POST',{job_id:item.id});notice('Job queued for replay.');await loadJobs()}}});
   if(item.status==='pending'||item.status==='retry')acts.push({label:'Cancel job',action:async()=>{if(await confirmAsync(`Cancel job ${item.id}?`,'The job is marked cancelled and will not run again.','Cancel')){await api('/api/queue-cancel','POST',{job_id:item.id});notice('Job cancelled.');await loadJobs()}}});
+  if(!item.scope_paused&&(item.status==='pending'||item.status==='retry'||item.status==='leased'))acts.push({label:'Pause scope',action:async()=>{if(await confirmAsync(`Pause scope (bot ${item.bot_id}, chat ${item.chat_id})?`,'No new jobs will be claimed from this scope until resumed.','Pause')){await api('/api/queue-pause','POST',scope);notice('Scope paused.');await loadJobs()}}});
+  if(item.scope_paused)acts.push({label:'Resume scope',action:async()=>{await api('/api/queue-resume','POST',scope);notice('Scope resumed.');await loadJobs()}});
   cell(row,acts.length?actionMenu('Job actions',acts):'');
-  return keyed(row,`job/${item.id}`,{id:item.id,status:item.status,attempts:item.attempts,failure_class:item.failure_class||'',updated_at:item.updated_at});
+  return keyed(row,`job/${item.id}`,{id:item.id,status:item.status,scope_paused:!!item.scope_paused,attempts:item.attempts,failure_class:item.failure_class||'',updated_at:item.updated_at});
  });
  reconcile($('jobs-list'),nodes,filtered.length===0&&(kind||status)?'No jobs match the filter.':'No jobs yet.',6);
 }

@@ -64,7 +64,7 @@ func (a *AgentStore) AdminPage(ctx context.Context, kind, cursor string, limit i
 		keys = "job_id,step"
 		descending = true
 	case "jobs":
-		query = "SELECT id,agent_id,bot_id,chat_id,thread_id,kind,status,attempts,max_attempts,failure_class,payload,created_at,updated_at FROM queue_jobs WHERE 1=1"
+		query = "SELECT id,agent_id,bot_id,chat_id,thread_id,kind,status,attempts,max_attempts,failure_class,payload,created_at,updated_at,EXISTS(SELECT 1 FROM queue_paused_scopes p WHERE p.agent_id=queue_jobs.agent_id AND p.bot_id=queue_jobs.bot_id AND p.chat_id=queue_jobs.chat_id) AS scope_paused FROM queue_jobs WHERE 1=1"
 		keys = "id"
 		descending = true
 	case "history":

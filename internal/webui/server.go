@@ -125,6 +125,8 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/queue-replay", s.mutation((*Server).queueReplay))
 		r.Post("/api/queue-cancel", s.mutation((*Server).queueCancel))
 		r.Post("/api/queue-cancel-bulk", s.mutation((*Server).queueCancelBulk))
+		r.Post("/api/queue-pause", s.mutation((*Server).queuePause))
+		r.Post("/api/queue-resume", s.mutation((*Server).queueResume))
 		r.Get("/api/runtime", func(w http.ResponseWriter, r *http.Request) {
 			if s.RuntimeStatus != nil {
 				send(w, s.RuntimeStatus())
@@ -871,6 +873,31 @@ func (s *Server) queueCancelBulk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	send(w, map[string]int64{"cancelled": n})
+}
+
+func (s *Server) queuePause(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID string `json:"agent_id"`
+		BotID   int64  `json:"bot_id"`
+		ChatID  int64  `json:"chat_id"`
+		Reason  string `json:"reason"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Queue().PauseScope(r.Context(), in.AgentID, in.BotID, in.ChatID, 0, in.Reason))
+}
+
+func (s *Server) queueResume(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID string `json:"agent_id"`
+		BotID   int64  `json:"bot_id"`
+		ChatID  int64  `json:"chat_id"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Queue().ResumeScope(r.Context(), in.AgentID, in.BotID, in.ChatID))
 }
 
 func (s *Server) userRole(w http.ResponseWriter, r *http.Request) {
