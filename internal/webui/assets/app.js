@@ -181,7 +181,9 @@ function renderJobs(items){
   if(item.payload)desc.append(detailBlock('Payload',item.payload));
   cell(row,desc);
   cell(row,item.created_at?fmtTime(Number(item.created_at)):'');
-  const acts=item.status==='dead'?[{label:'Replay job',action:async()=>{if(await confirmAsync(`Replay job ${item.id}?`,'Completed steps are reused; only unfinished work runs again.','Replay')){await api('/api/queue-replay','POST',{job_id:item.id});notice('Job queued for replay.');await loadJobs()}}}]:[];
+  const acts=[];
+  if(item.status==='dead')acts.push({label:'Replay job',action:async()=>{if(await confirmAsync(`Replay job ${item.id}?`,'Completed steps are reused; only unfinished work runs again.','Replay')){await api('/api/queue-replay','POST',{job_id:item.id});notice('Job queued for replay.');await loadJobs()}}});
+  if(item.status==='pending'||item.status==='retry')acts.push({label:'Cancel job',action:async()=>{if(await confirmAsync(`Cancel job ${item.id}?`,'The job is marked cancelled and will not run again.','Cancel')){await api('/api/queue-cancel','POST',{job_id:item.id});notice('Job cancelled.');await loadJobs()}}});
   cell(row,acts.length?actionMenu('Job actions',acts):'');
   return keyed(row,`job/${item.id}`,{id:item.id,status:item.status,attempts:item.attempts,failure_class:item.failure_class||'',updated_at:item.updated_at});
  });

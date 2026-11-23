@@ -202,6 +202,51 @@ func (q *Queue) Fail(ctx context.Context, r queue.Receipt, class string) error {
 }
 
 var ErrNotDead = errors.New("job is not dead")
+var ErrNotCancellable = errors.New("job is not pending or retry")
+
+// Cancel moves a pending or retry job to the cancelled status. Cancelled jobs
+// are excluded from Replay and counted separately from failed ones.
+func (q *Queue) Cancel(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return errors.New("invalid job id")
+	}
+	result := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET status='cancelled',lease_token='',lease_until=0,updated_at=`+q.now+` WHERE id=? AND status IN ('pending','retry')`, id)
+	if result.Error != nil {
+		return errors.New("queue cancel failed")
+	}
+	if result.RowsAffected != 1 {
+		return ErrNotCancellable
+	}
+	return nil
+}
+
+// CancelScope cancels all pending/retry jobs in the given scope, optionally
+// filtered by kind (empty = all kinds). Returns the number cancelled.
+// When keepLast > 0, the keepLast most-recently-enqueued jobs of the given
+// kind are preserved; older ones are cancelled.
+func (q *Queue) CancelScope(ctx context.Context, agentID string, botID, chatID int64, kind string, keepLast int) (int64, error) {
+	var kindFilter, keepFilter string
+	var args []any
+	args = append(args, agentID, botID, chatID)
+	if kind != "" {
+		kindFilter = " AND kind=?"
+		args = append(args, kind)
+	}
+	if keepLast > 0 {
+		keepFilter = " AND id NOT IN (SELECT id FROM queue_jobs WHERE agent_id=? AND bot_id=? AND chat_id=? AND status IN ('pending','retry')" + kindFilter + " ORDER BY id DESC LIMIT ?)"
+		args = append(args, agentID, botID, chatID)
+		if kind != "" {
+			args = append(args, kind)
+		}
+		args = append(args, keepLast)
+	}
+	result := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET status='cancelled',lease_token='',lease_until=0,updated_at=`+q.now+
+		` WHERE agent_id=? AND bot_id=? AND chat_id=? AND status IN ('pending','retry')`+kindFilter+keepFilter, args...)
+	if result.Error != nil {
+		return 0, errors.New("queue cancel scope failed")
+	}
+	return result.RowsAffected, nil
+}
 
 // Replay returns a dead job to the queue with a fresh attempt budget. Durable
 // checkpoints (tool turns, cached results, delivery receipts) are preserved, so

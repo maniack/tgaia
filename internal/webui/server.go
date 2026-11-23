@@ -123,6 +123,8 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/lists/{kind}", s.list)
 		r.Post("/api/resolve-outcome", s.mutation((*Server).resolveOutcome))
 		r.Post("/api/queue-replay", s.mutation((*Server).queueReplay))
+		r.Post("/api/queue-cancel", s.mutation((*Server).queueCancel))
+		r.Post("/api/queue-cancel-bulk", s.mutation((*Server).queueCancelBulk))
 		r.Get("/api/runtime", func(w http.ResponseWriter, r *http.Request) {
 			if s.RuntimeStatus != nil {
 				send(w, s.RuntimeStatus())
@@ -835,6 +837,40 @@ func (s *Server) queueReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result(w, err)
+}
+
+func (s *Server) queueCancel(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		JobID int64 `json:"job_id"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	err := s.DB.Queue().Cancel(r.Context(), in.JobID)
+	if errors.Is(err, storage.ErrNotCancellable) {
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	result(w, err)
+}
+
+func (s *Server) queueCancelBulk(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID  string `json:"agent_id"`
+		BotID    int64  `json:"bot_id"`
+		ChatID   int64  `json:"chat_id"`
+		Kind     string `json:"kind"`
+		KeepLast int    `json:"keep_last"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	n, err := s.DB.Queue().CancelScope(r.Context(), in.AgentID, in.BotID, in.ChatID, in.Kind, in.KeepLast)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	send(w, map[string]int64{"cancelled": n})
 }
 
 func (s *Server) userRole(w http.ResponseWriter, r *http.Request) {
