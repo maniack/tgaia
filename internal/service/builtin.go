@@ -759,6 +759,13 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 		}
 		_ = store.SyncMessage(ctx, b.job.Scope, in.MessageID, "", true)
 		_ = moderator
+		if links, err := store.ReplyLinks(ctx, b.job.Scope, in.MessageID); err == nil {
+			for _, link := range links {
+				payload, _ := json.Marshal(agent.JobPayload{MessageID: link.MessageID, Action: "delete"})
+				key := fmt.Sprintf("cascade-delete:%d:%d", in.MessageID, link.MessageID)
+				_, _ = b.engine.DB.Queue().Enqueue(ctx, queue.Input{Scope: b.job.Scope, Key: key, Kind: "message_action", Payload: payload, MaxAttempts: 3})
+			}
+		}
 		return toolResult(map[string]any{"deleted": in.MessageID}), nil
 	case toolModerateBan, toolModerateUnban:
 		var in struct {
