@@ -202,6 +202,20 @@ func (a *AgentStore) ApplyReviewOperations(ctx context.Context, s chat.Scope, op
 	return nil
 }
 
+// AllCorrections returns all corrections for an agent, newest first.
+// status "" means all; otherwise filters to that status.
+func (a *AgentStore) AllCorrections(ctx context.Context, agentID, status string) ([]agent.Correction, error) {
+	if agentID == "" {
+		return nil, errors.New("agent_id required")
+	}
+	q := a.db.WithContext(ctx).Table("behavior_corrections").Where("agent_id=?", agentID)
+	if status != "" {
+		q = q.Where("status=?", status)
+	}
+	var out []agent.Correction
+	return out, q.Order("id DESC").Limit(500).Find(&out).Error
+}
+
 // SetCorrection changes a correction's status, or deletes it ("delete").
 func (a *AgentStore) SetCorrection(ctx context.Context, s chat.Scope, id, version int64, action string) error {
 	s = chatOnly(s)

@@ -154,6 +154,7 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/prompt", s.mutation((*Server).putPrompt))
 		r.Post("/api/bot-tool-limits", s.mutation((*Server).putBotToolLimits))
 		r.Get("/api/corrections", s.corrections)
+		r.Get("/api/corrections/all", s.allCorrections)
 		r.Post("/api/corrections", s.mutation((*Server).putCorrection))
 		r.Get("/api/chat-behavior", s.chatBehavior)
 		r.Post("/api/chat-behavior", s.mutation((*Server).putChatBehavior))
@@ -596,6 +597,17 @@ func (s *Server) putPrompt(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) corrections(w http.ResponseWriter, r *http.Request) {
 	list, err := s.DB.Agent().Corrections(r.Context(), scope(r), "")
+	if err != nil {
+		result(w, err)
+		return
+	}
+	if list == nil {
+		list = []agent.Correction{}
+	}
+	send(w, list)
+}
+func (s *Server) allCorrections(w http.ResponseWriter, r *http.Request) {
+	list, err := s.DB.Agent().AllCorrections(r.Context(), r.URL.Query().Get("agent_id"), r.URL.Query().Get("status"))
 	if err != nil {
 		result(w, err)
 		return

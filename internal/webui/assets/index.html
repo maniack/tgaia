@@ -25,6 +25,7 @@
   <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.5 4.5a4.5 4.5 0 0 0 5 6.3L12 18.3a2 2 0 0 1-2.8-2.8l7.5-7.5a4.5 4.5 0 0 0-6.3-5z"/></symbol>
   <symbol id="i-status" viewBox="0 0 24 24"><path d="M4 17h3l2.2-6 3.2 9L15 7l2 7h3"/></symbol>
   <symbol id="i-code" viewBox="0 0 24 24"><path d="M8.5 7L4 12l4.5 5M15.5 7l4.5 5-4.5 5M14 4l-4 16"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l5 5L19 7"/></symbol>
 </svg>
 
 <div class="shell">
@@ -35,6 +36,7 @@
     <button data-tab="tasks"><svg class="icon"><use href="#i-clock"/></svg><span data-short="Tasks">Scheduled tasks</span></button>
     <button data-tab="people"><svg class="icon"><use href="#i-people"/></svg><span data-short="People">People &amp; access</span></button>
     <button data-tab="knowledge"><svg class="icon"><use href="#i-brain"/></svg><span data-short="Memory">Memory</span></button>
+    <button data-tab="behaviour" class="desktop-extra"><svg class="icon"><use href="#i-check"/></svg><span data-short="Rules">Behaviour</span><span id="behaviour-badge" class="nav-badge" hidden></span></button>
     <button data-tab="skills" class="desktop-extra"><svg class="icon"><use href="#i-code"/></svg><span data-short="Skills">Skills &amp; files</span></button>
     <button data-tab="status" class="desktop-extra"><svg class="icon"><use href="#i-status"/></svg><span data-short="Status">Status</span></button>
     <button data-tab="outgoing" class="desktop-extra"><svg class="icon"><use href="#i-wrench"/></svg><span data-short="Operations">Operations</span></button>
@@ -141,6 +143,19 @@
   <div>
     <div class="section-head"><h2>All scheduled tasks</h2><div class="controls"><button id="new-task"><svg class="icon"><use href="#i-plus"/></svg>New task</button></div></div>
     <div class="table-scroll"><table><thead><tr><th>Task prompt</th><th>Bot / chat / author</th><th>Next run</th><th>Status</th><th></th></tr></thead><tbody id="task-list"></tbody></table></div>
+  </div>
+</section>
+
+<section id="behaviour" class="view" hidden>
+  <div>
+    <div class="section-head">
+      <div><h2>Behaviour corrections</h2><p class="section-lead">Changes the bot proposed for itself across all conversations. Approve corrections to include them in the bot's context.</p></div>
+      <div class="controls">
+        <label>Chat <span class="select"><select id="behaviour-chat-filter"></select></span></label>
+        <label>Status <span class="select"><select id="behaviour-status-filter"><option value="">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="disabled">Disabled</option></select></span></label>
+      </div>
+    </div>
+    <div class="table-scroll"><table><thead><tr><th>Correction</th><th>Reason</th><th>Chat</th><th>Status</th><th>Proposed</th><th></th></tr></thead><tbody id="behaviour-list"></tbody></table></div>
   </div>
 </section>
 
@@ -403,6 +418,7 @@
 <dialog id="more-sheet" class="nav-sheet" aria-labelledby="more-title">
   <div class="sheet-head"><h2 id="more-title">More</h2><button type="button" class="sheet-close" data-close="more-sheet" aria-label="Close">×</button></div>
   <div class="more-links">
+    <button data-tab="behaviour"><svg class="icon"><use href="#i-check"/></svg><span>Behaviour</span><small>Corrections the bot proposed for itself</small></button>
     <button data-tab="skills"><svg class="icon"><use href="#i-code"/></svg><span>Skills &amp; files</span><small>Sandboxed capabilities and virtual storage</small></button>
     <button data-tab="status"><svg class="icon"><use href="#i-status"/></svg><span>Status</span><small>Health, activity and capabilities</small></button>
     <button data-tab="outgoing"><svg class="icon"><use href="#i-wrench"/></svg><span>Operations</span><small>Deliveries, tool calls and audit</small></button>

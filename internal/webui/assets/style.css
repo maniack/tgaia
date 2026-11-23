@@ -253,6 +253,7 @@ button .icon { width: 15px; height: 15px; }
 .tag.warning { background: var(--orange-tint); color: color-mix(in srgb, var(--orange) 78%, var(--label)); }
 .tag.neutral { background: var(--fill-3); color: var(--label-2); }
 .tag.info { background: var(--accent-tint); color: var(--accent); }
+.nav-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--orange); color: #fff; font-size: 10px; font-weight: 700; margin-left: auto; line-height: 1; }
 
 /* ---------- Cards / grouped lists ---------- */
 .card { background: var(--bg-elevated); border-radius: var(--radius); box-shadow: var(--shadow-card); min-width: 0; }
