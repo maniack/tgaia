@@ -127,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/queue-cancel-bulk", s.mutation((*Server).queueCancelBulk))
 		r.Post("/api/queue-pause", s.mutation((*Server).queuePause))
 		r.Post("/api/queue-resume", s.mutation((*Server).queueResume))
+		r.Get("/api/queue/backlog", s.queueBacklog)
 		r.Get("/api/runtime", func(w http.ResponseWriter, r *http.Request) {
 			if s.RuntimeStatus != nil {
 				send(w, s.RuntimeStatus())
@@ -898,6 +899,15 @@ func (s *Server) queueResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result(w, s.DB.Queue().ResumeScope(r.Context(), in.AgentID, in.BotID, in.ChatID))
+}
+
+func (s *Server) queueBacklog(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.DB.Queue().Backlog(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	send(w, rows)
 }
 
 func (s *Server) userRole(w http.ResponseWriter, r *http.Request) {

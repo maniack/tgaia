@@ -171,6 +171,9 @@
 <section id="jobs" class="view" hidden>
   <nav class="subnav" aria-label="Operations"><button data-tab="outgoing">Deliveries</button><button data-tab="outcomes">Tool calls</button><button data-tab="jobs">Jobs</button><button data-tab="audit">Audit log</button></nav>
   <div>
+    <div class="section-head"><h2>Queue backlog</h2></div>
+    <p class="section-lead">Active jobs grouped by scope. Scopes with no pending or running work are hidden.</p>
+    <div class="table-scroll"><table><thead><tr><th>Scope</th><th>Pending</th><th>Running</th><th>Retry</th><th>Oldest pending</th><th>Status</th><th></th></tr></thead><tbody id="queue-backlog"></tbody></table></div>
     <div class="section-head"><h2>Queue jobs</h2><div class="controls"><label>Kind <span class="select"><select id="jobs-kind"><option value="">All kinds</option><option value="respond">Respond</option><option value="compact">Compact</option><option value="review_behavior">Behavior review</option><option value="message_action">Message action</option><option value="media">Media</option><option value="failure_notice">Failure notice</option></select></span></label><label>Status <span class="select"><select id="jobs-status"><option value="">All statuses</option><option value="pending">Pending</option><option value="leased">Running</option><option value="retry">Retry</option><option value="completed">Completed</option><option value="dead">Dead</option></select></span></label></div></div>
     <p class="section-lead">All queue jobs across every kind, newest first. Payload and failure details expand inline. Filters apply to the current page.</p>
     <div class="table-scroll"><table><thead><tr><th>Job</th><th>Scope</th><th>Status</th><th>Details</th><th>Created</th><th></th></tr></thead><tbody id="jobs-list"></tbody></table></div>

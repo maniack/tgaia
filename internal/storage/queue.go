@@ -293,3 +293,35 @@ func (q *Queue) ResumeScope(ctx context.Context, agentID string, botID, chatID i
 	}
 	return nil
 }
+
+// BacklogRow summarises the active queue depth for one scope.
+type BacklogRow struct {
+	AgentID        string `json:"agent_id"`
+	BotID          int64  `json:"bot_id"`
+	ChatID         int64  `json:"chat_id"`
+	Pending        int64  `json:"pending"`
+	Leased         int64  `json:"leased"`
+	Retry          int64  `json:"retry"`
+	OldestPendingMs int64 `json:"oldest_pending_ms"`
+	ScopePaused    bool   `json:"scope_paused"`
+}
+
+// Backlog returns one row per scope that has pending, leased, or retry jobs.
+func (q *Queue) Backlog(ctx context.Context) ([]BacklogRow, error) {
+	var rows []BacklogRow
+	err := q.db.WithContext(ctx).Raw(`
+SELECT j.agent_id,j.bot_id,j.chat_id,
+ SUM(CASE WHEN j.status='pending' THEN 1 ELSE 0 END) AS pending,
+ SUM(CASE WHEN j.status='leased'  THEN 1 ELSE 0 END) AS leased,
+ SUM(CASE WHEN j.status='retry'   THEN 1 ELSE 0 END) AS retry,
+ MIN(CASE WHEN j.status='pending' THEN j.available_at END) AS oldest_pending_ms,
+ EXISTS(SELECT 1 FROM queue_paused_scopes p WHERE p.agent_id=j.agent_id AND p.bot_id=j.bot_id AND p.chat_id=j.chat_id) AS scope_paused
+FROM queue_jobs j
+WHERE j.status IN ('pending','leased','retry')
+GROUP BY j.agent_id,j.bot_id,j.chat_id
+ORDER BY j.agent_id,j.bot_id,j.chat_id`).Scan(&rows).Error
+	if err != nil {
+		return nil, errors.New("queue backlog failed")
+	}
+	return rows, nil
+}

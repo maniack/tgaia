@@ -192,8 +192,28 @@ function renderJobs(items){
  });
  reconcile($('jobs-list'),nodes,filtered.length===0&&(kind||status)?'No jobs match the filter.':'No jobs yet.',6);
 }
+function renderBacklog(rows){
+ const nodes=rows.map(row=>{
+  const tr=element('tr');
+  cell(tr,`${row.agent_id} · bot ${row.bot_id} · chat ${row.chat_id}`);
+  cell(tr,row.pending||'—');
+  cell(tr,row.leased||'—');
+  cell(tr,row.retry||'—');
+  cell(tr,row.oldest_pending_ms?fmtTime(Number(row.oldest_pending_ms)):'—');
+  const st=element('span');if(row.scope_paused)st.append(badge('paused',true,'warn'));cell(tr,st);
+  const scope={agent_id:row.agent_id,bot_id:row.bot_id,chat_id:row.chat_id};
+  const acts=[];
+  if(!row.scope_paused)acts.push({label:'Pause scope',action:async()=>{if(await confirmAsync(`Pause scope (bot ${row.bot_id}, chat ${row.chat_id})?`,'No new jobs will be claimed from this scope until resumed.','Pause')){await api('/api/queue-pause','POST',scope);notice('Scope paused.');await loadJobs()}}});
+  else acts.push({label:'Resume scope',action:async()=>{await api('/api/queue-resume','POST',scope);notice('Scope resumed.');await loadJobs()}});
+  acts.push({label:'Cancel all pending',action:async()=>{if(await confirmAsync(`Cancel all pending jobs (bot ${row.bot_id}, chat ${row.chat_id})?`,'All pending and retry jobs in this scope will be cancelled.','Cancel all')){const r=await api('/api/queue-cancel-bulk','POST',scope);notice(`Cancelled ${r.cancelled} job(s).`);await loadJobs()}}});
+  cell(tr,actionMenu('Scope actions',acts));
+  return keyed(tr,`backlog/${row.agent_id}/${row.bot_id}/${row.chat_id}`,row);
+ });
+ reconcile($('queue-backlog'),nodes,'No active scopes.',7);
+}
 async function loadJobs(){
- await fetchList('jobs');
+ const [,backlog]=await Promise.all([fetchList('jobs'),api('/api/queue/backlog').catch(()=>[])]);
+ renderBacklog(backlog||[]);
  renderJobs(snapshot.data.jobs||[]);
  pager('jobs',$('jobs-list').closest('.table-scroll'));
  labelTables();
