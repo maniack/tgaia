@@ -204,6 +204,7 @@ func (q *Queue) Fail(ctx context.Context, r queue.Receipt, class string) error {
 
 var ErrNotDead = errors.New("job is not dead")
 var ErrNotCancellable = errors.New("job is not pending or retry")
+var ErrNotBoostable = errors.New("job is not pending or retry")
 
 // Cancel moves a pending or retry job to the cancelled status. Cancelled jobs
 // are excluded from Replay and counted separately from failed ones.
@@ -264,6 +265,22 @@ func (q *Queue) Replay(ctx context.Context, id int64) error {
 	}
 	if result.RowsAffected != 1 {
 		return ErrNotDead
+	}
+	return nil
+}
+
+// Boost moves a pending or retry job to priority 0 and makes it available immediately,
+// so it will be the next job claimed in its scope.
+func (q *Queue) Boost(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return errors.New("invalid job id")
+	}
+	result := q.db.WithContext(ctx).Exec(`UPDATE queue_jobs SET priority=0,available_at=`+q.now+`,updated_at=`+q.now+` WHERE id=? AND status IN ('pending','retry')`, id)
+	if result.Error != nil {
+		return errors.New("queue boost failed")
+	}
+	if result.RowsAffected != 1 {
+		return ErrNotBoostable
 	}
 	return nil
 }

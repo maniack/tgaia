@@ -125,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/queue-replay", s.mutation((*Server).queueReplay))
 		r.Post("/api/queue-cancel", s.mutation((*Server).queueCancel))
 		r.Post("/api/queue-cancel-bulk", s.mutation((*Server).queueCancelBulk))
+		r.Post("/api/queue-boost", s.mutation((*Server).queueBoost))
 		r.Post("/api/queue-pause", s.mutation((*Server).queuePause))
 		r.Post("/api/queue-resume", s.mutation((*Server).queueResume))
 		r.Get("/api/queue/backlog", s.queueBacklog)
@@ -887,6 +888,21 @@ func (s *Server) queueCancelBulk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	send(w, map[string]int64{"cancelled": n})
+}
+
+func (s *Server) queueBoost(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		JobID int64 `json:"job_id"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	err := s.DB.Queue().Boost(r.Context(), in.JobID)
+	if errors.Is(err, storage.ErrNotBoostable) {
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	result(w, err)
 }
 
 func (s *Server) queuePause(w http.ResponseWriter, r *http.Request) {

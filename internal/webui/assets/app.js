@@ -186,6 +186,7 @@ function renderJobs(items){
   const scope={agent_id:item.agent_id,bot_id:item.bot_id,chat_id:item.chat_id};
   const acts=[];
   if(item.status==='dead')acts.push({label:'Replay job',action:async()=>{if(await confirmAsync(`Replay job ${item.id}?`,'Completed steps are reused; only unfinished work runs again.','Replay')){await api('/api/queue-replay','POST',{job_id:item.id});notice('Job queued for replay.');await loadJobs()}}});
+  if(item.status==='pending'||item.status==='retry')acts.push({label:'Run next',action:async()=>{await api('/api/queue-boost','POST',{job_id:item.id});notice('Job boosted to front of queue.');await loadJobs()}});
   if(item.status==='pending'||item.status==='retry')acts.push({label:'Cancel job',action:async()=>{if(await confirmAsync(`Cancel job ${item.id}?`,'The job is marked cancelled and will not run again.','Cancel')){await api('/api/queue-cancel','POST',{job_id:item.id});notice('Job cancelled.');await loadJobs()}}});
   if(!item.scope_paused&&(item.status==='pending'||item.status==='retry'||item.status==='leased'))acts.push({label:'Pause scope',action:async()=>{if(await confirmAsync(`Pause scope (bot ${item.bot_id}, chat ${item.chat_id})?`,'No new jobs will be claimed from this scope until resumed.','Pause')){await api('/api/queue-pause','POST',scope);notice('Scope paused.');await loadJobs()}}});
   if(item.scope_paused)acts.push({label:'Resume scope',action:async()=>{await api('/api/queue-resume','POST',scope);notice('Scope resumed.');await loadJobs()}});
