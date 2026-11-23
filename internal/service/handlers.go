@@ -1043,17 +1043,18 @@ func (e *Engine) capabilities(botID int64) string {
 		servers = append(servers, "none for this bot")
 	}
 	manifest := map[string]any{
-		"software":       "tgaia, an open-source Telegram agent written in Go (github.com/maniack/tgaia)",
-		"model":          e.Config.LLMModel,
-		"memory":         "per-chat conversation history, a periodically compacted long-term summary, and durable user facts with conservative automatic profile extraction (tools memory_list/memory_save/memory_update/memory_delete)",
-		"scheduler":      "one-time and fixed-interval tasks per chat (tools task_list/task_create/task_update/task_delete); no calendar rules yet",
-		"images":         "images in the chat are described by the model and the description is kept in history",
-		"messages":       "current-chat bot messages can be listed, separately sent, edited and deleted through message_list/message_send/message_edit/message_delete",
-		"skills":         "the agent can create, test, version, run and delete sandboxed Starlark skills stored in the database; skills have no host filesystem, network, process or environment access",
-		"virtual_files":  "skills and tools can store text under scoped /user, /chat and /bot paths in the database; this is not the host filesystem",
-		"moderation":     map[bool]string{true: "permission-gated Telegram group delete/ban/restrict/pin tools are enabled in configuration and still require live Telegram administrator rights", false: "Telegram group moderation tools are off by configuration"}[e.Config.TelegramAdminTools],
-		"external_tools": "MCP servers the administrator enabled for this bot: " + strings.Join(servers, ", "),
-		"not_available":  "no OAuth or account integrations (no Gmail, Notion, GitHub, Jira access unless an MCP server provides it), no audio or video recognition, no access to its own source code, configuration, secrets or infrastructure, no messages to other chats, no changes to permissions",
+		"software":        "tgaia, an open-source Telegram agent written in Go (github.com/maniack/tgaia)",
+		"model":           e.Config.LLMModel,
+		"memory":          "per-chat conversation history, a periodically compacted long-term summary, and durable user facts with conservative automatic profile extraction (tools memory_list/memory_save/memory_update/memory_delete)",
+		"scheduler":       "one-time and fixed-interval tasks per chat (tools task_list/task_create/task_update/task_delete); no calendar rules yet",
+		"images":          "images in the chat are described by the model and the description is kept in history",
+		"messages":        "current-chat bot messages can be listed, separately sent, edited and deleted through message_list/message_send/message_edit/message_delete",
+		"skills":          "the agent can create, test, version, run and delete sandboxed Starlark skills stored in the database; skills have no host filesystem, network, process or environment access",
+		"virtual_files":   "skills and tools can store text under scoped /user, /chat and /bot paths in the database; this is not the host filesystem",
+		"moderation":      map[bool]string{true: "permission-gated Telegram group delete/ban/restrict/pin tools are enabled in configuration and still require live Telegram administrator rights", false: "Telegram group moderation tools are off by configuration"}[e.Config.TelegramAdminTools],
+		"external_tools":  "MCP servers the administrator enabled for this bot: " + strings.Join(servers, ", "),
+		"not_available":   "no OAuth or account integrations (no Gmail, Notion, GitHub, Jira access unless an MCP server provides it), no audio or video recognition, no access to its own source code, configuration, secrets or infrastructure, no messages to other chats, no changes to permissions",
+		"language_policy": "always reply in the same language the user writes in, even when explaining your own capabilities, what you cannot do, or when the platform description above is in English",
 	}
 	data, _ := json.Marshal(manifest)
 	return "\n## Platform\n" + string(data)
