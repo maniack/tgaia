@@ -12,7 +12,8 @@ import (
 )
 
 // Migration 018 collapses per-topic summaries into one chat-wide summary,
-// keeping the most advanced checkpoint of each chat.
+// keeping the most advanced checkpoint of each chat. Migration 034 then moves
+// all summaries into memory_episodes as background episodes.
 func TestChatMemoryMigrationCollapsesTopicSummaries(t *testing.T) {
 	db, _ := databasesAtVersion(t, config.SQLite, 17)
 	ctx := context.Background()
@@ -31,15 +32,21 @@ func TestChatMemoryMigrationCollapsesTopicSummaries(t *testing.T) {
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// After 018: per-topic summaries collapsed into one per chat.
+	// After 034: memory_summaries is gone; data lives in memory_episodes with kind='background'.
 	var rows []struct {
-		ChatID, ThreadID, ThroughID int64
-		Content                     string
+		ChatID    int64
+		Kind      string
+		ThroughID int64
+		Content   string
 	}
-	if err := db.orm.Table("memory_summaries").Order("chat_id").Find(&rows).Error; err != nil {
+	if err := db.orm.Table("memory_episodes").Where("kind='background'").Order("chat_id").Find(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 || rows[0].ChatID != 100 || rows[0].ThreadID != 0 || rows[0].ThroughID != 9 || rows[0].Content != "topic ten" || rows[1].ChatID != 200 || rows[1].ThreadID != 0 || rows[1].Content != "other chat" {
-		t.Fatalf("unexpected summaries after migration: %+v", rows)
+	if len(rows) != 2 ||
+		rows[0].ChatID != 100 || rows[0].ThroughID != 9 || rows[0].Content != "topic ten" ||
+		rows[1].ChatID != 200 || rows[1].ThroughID != 3 || rows[1].Content != "other chat" {
+		t.Fatalf("unexpected background episodes after migration: %+v", rows)
 	}
 	if err := db.Agent().Ready(ctx); err != nil {
 		t.Fatal(err)
@@ -47,13 +54,13 @@ func TestChatMemoryMigrationCollapsesTopicSummaries(t *testing.T) {
 }
 
 func TestAdminDeleteExplicitMemory(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 40)
+	db, _ := databasesAtVersion(t, config.SQLite, 42)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "remember this", SentAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.orm.Exec("INSERT INTO explicit_memories(agent_id,bot_id,chat_id,thread_id,source_message_id,source_update_id,created_by,content,created_at) VALUES ('test',1,100,0,1,1,7,'a fact',?)", time.Now().UnixMilli()).Error; err != nil {
+	if err := db.orm.Exec("INSERT INTO memory_episodes(agent_id,bot_id,chat_id,kind,period_start,through_id,source_message_id,source_update_id,created_by,content,embedding_model,embedding,created_at) VALUES ('test',1,100,'fact',1,1,1,1,7,'a fact','','[]',?)", time.Now().UnixMilli()).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Agent().AdminDeleteExplicitMemory(ctx, scope, 1); err != nil {
@@ -65,7 +72,7 @@ func TestAdminDeleteExplicitMemory(t *testing.T) {
 }
 
 func TestUserProfileMemoriesAggregateAcrossChats(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 40)
+	db, _ := databasesAtVersion(t, config.SQLite, 42)
 	ctx := context.Background()
 	empty, err := db.Agent().UserProfileMemories(ctx, "test", 7)
 	if err != nil || empty == nil || len(empty) != 0 {
@@ -77,7 +84,7 @@ func TestUserProfileMemoriesAggregateAcrossChats(t *testing.T) {
 		if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: messageID, MessageID: messageID, Text: "remember this", Name: "Ada", SentAt: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.orm.Exec("INSERT INTO explicit_memories(agent_id,bot_id,chat_id,thread_id,source_message_id,source_update_id,created_by,content,created_at) VALUES ('test',1,?,0,?,?,7,?,?)", chatID, messageID, messageID, fmt.Sprintf("fact %d", i), time.Now().UnixMilli()+int64(i)).Error; err != nil {
+		if err := db.orm.Exec("INSERT INTO memory_episodes(agent_id,bot_id,chat_id,kind,period_start,through_id,source_message_id,source_update_id,created_by,content,embedding_model,embedding,created_at) VALUES ('test',1,?,'fact',?,?,?,?,7,?,'','[]',?)", chatID, messageID, messageID, messageID, messageID, fmt.Sprintf("fact %d", i), time.Now().UnixMilli()+int64(i)).Error; err != nil {
 			t.Fatal(err)
 		}
 	}

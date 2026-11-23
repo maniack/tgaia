@@ -16,7 +16,7 @@ import (
 func TestMessageReactionsPersistWithoutQueueingResponse(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 40)
+			db, _ := databasesAtVersion(t, driver, 42)
 			ctx := context.Background()
 			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UpdateID: 1, MessageID: 1, UserID: 7, Name: "Ada", Username: "ada", Title: "Team", ChatType: "supergroup", Text: "hello", SentAt: time.Now(), Respond: false}); err != nil {
@@ -108,7 +108,7 @@ func TestMessageReactionsPersistWithoutQueueingResponse(t *testing.T) {
 func TestConversationBehaviorAndBotSenders(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 40)
+			db, _ := databasesAtVersion(t, driver, 42)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 			second := chat.Scope{AgentID: "test", BotID: 1, ChatID: 200}
@@ -203,7 +203,7 @@ func TestConversationBehaviorAndBotSenders(t *testing.T) {
 func TestNoOpEditDoesNotInvalidateInFlightResponse(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 40)
+			db, _ := databasesAtVersion(t, driver, 42)
 			ctx := context.Background()
 			scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 0}
 			in := agent.Incoming{Scope: scope, UserID: 7, UpdateID: 83574217, MessageID: 46919, Text: "hello", SentAt: time.Now(), Respond: true}
@@ -232,7 +232,7 @@ func TestNoOpEditDoesNotInvalidateInFlightResponse(t *testing.T) {
 func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 	for _, driver := range []config.Driver{config.SQLite, config.Postgres} {
 		t.Run(string(driver), func(t *testing.T) {
-			db, _ := databasesAtVersion(t, driver, 40)
+			db, _ := databasesAtVersion(t, driver, 42)
 			ctx := context.Background()
 			first := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100, ThreadID: 10}
 			second := first
@@ -265,10 +265,10 @@ func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 			if other, err := db.Agent().Context(ctx, second, 0, 50); err != nil || other.Summary.Content != "old summary" || len(other.Messages) != 0 {
 				t.Fatal("summary not shared with the other topic", err)
 			}
-			var summaryTopic int64 = -1
-			db.orm.Table("memory_summaries").Select("thread_id").Where("chat_id=100").Scan(&summaryTopic)
-			if summaryTopic != 0 {
-				t.Fatal("chat-wide summary must live in topic 0")
+			var episodeCount int64
+			db.orm.Table("memory_episodes").Where("chat_id=100 AND kind='background' AND period_start=0").Count(&episodeCount)
+			if episodeCount != 1 {
+				t.Fatal("chat-wide summary must be a background episode with period_start=0")
 			}
 			in.Edited = true
 			in.UpdateID = 3
@@ -276,24 +276,28 @@ func TestTopicMemoryEditsAndScheduling(t *testing.T) {
 			if err := db.Agent().Accept(ctx, in); err != nil {
 				t.Fatal(err)
 			}
+			// Memory is the past: editing a message does not invalidate existing
+			// episodes. The edit will appear in the next compaction cycle instead.
 			c, err = db.Agent().Context(ctx, first, 0, 50)
-			if err != nil || c.Summary.Content != "" || len(c.Messages) != 2 || c.Messages[0].Text != "corrected" {
-				t.Fatal("edit not reflected", err)
+			if err != nil || c.Summary.Content != "old summary" || len(c.Messages) != 0 {
+				t.Fatal("edit must not invalidate existing memory", err)
 			}
-			if _, err := db.Agent().SaveSummary(ctx, *job, 0, c.Messages[1].ID, "stale", 0); err == nil {
+			// Stale compaction is still rejected: memory_revision advanced on edit.
+			if _, err := db.Agent().SaveSummary(ctx, *job, 0, 2, "stale", 0); err == nil {
 				t.Fatal("stale compaction committed")
 			}
 			if current, err := db.Agent().ResponseCurrent(ctx, first, 1, 1); err != nil || current {
 				t.Fatal("stale response allowed")
 			}
+			// Out-of-order edit (older update_id) is silently ignored.
 			in.UpdateID = 0
 			in.Text = "late old edit"
 			if err := db.Agent().Accept(ctx, in); err != nil {
 				t.Fatal(err)
 			}
 			c, _ = db.Agent().Context(ctx, first, 0, 50)
-			if c.Messages[0].Text != "corrected" {
-				t.Fatal("out of order edit replaced latest")
+			if c.Summary.Content != "old summary" {
+				t.Fatal("out of order edit corrupted memory")
 			}
 			if err := db.Queue().Complete(ctx, job.Receipt); err != nil {
 				t.Fatal(err)

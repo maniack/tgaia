@@ -228,8 +228,19 @@ func (m ExplicitMemory) Author() string {
 	return who(m.CreatedBy, m.CreatedByName, m.CreatedByUsername)
 }
 
+// Episode is one entry in the tiered memory hierarchy. Session episodes are
+// detailed per-conversation summaries; background is the compressed long-term
+// record. Both live in the memory_episodes table.
+type Episode struct {
+	Kind        string `json:"kind"`
+	PeriodStart int64  `json:"period_start"`
+	ThroughID   int64  `json:"through_id"`
+	Content     string `json:"content"`
+}
+
 type Context struct {
 	Summary          Summary
+	Episodes         []Episode // session episodes between background and raw messages, oldest first
 	Knowledge        string
 	ExplicitMemories []ExplicitMemory
 	Reactions        []MessageReaction

@@ -43,6 +43,7 @@ type App struct {
 	MemoryWindow          time.Duration
 	MemoryInterval        time.Duration
 	MemoryRetention       time.Duration // 0 = unlimited
+	MemorySessionWindow   time.Duration // 0 = session compaction disabled
 }
 type Bot struct {
 	DisplayName   string // Resolved by getMe; not a configuration setting.

@@ -48,7 +48,7 @@ func compactOnce(t *testing.T, e *Engine) {
 		t.Fatal(err)
 	}
 	job := take(t, e, "compact")
-	if err := e.Compact(ctx, *job); err != nil {
+	if err := e.CompactBackground(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {

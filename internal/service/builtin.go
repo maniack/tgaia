@@ -27,6 +27,7 @@ const (
 	toolTaskUpdate     = "task_update"
 	toolTaskDelete     = "task_delete"
 	toolMemoryList     = "memory_list"
+	toolMemorySearch   = "memory_search"
 	toolMemorySave     = "memory_save"
 	toolMemoryUpdate   = "memory_update"
 	toolMemoryDelete   = "memory_delete"
@@ -88,6 +89,7 @@ func (b *builtinTools) specs() []llm.Tool {
 	tools := []llm.Tool{
 		tool(toolTaskList, "List the scheduled and recurring tasks of this chat as stored by the scheduler, with their IDs, next run time and recurrence. Use it whenever the user asks about reminders or tasks; never answer from memory.", empty),
 		tool(toolMemoryList, "List the durable facts remembered about people in this chat, with their source message IDs.", empty),
+		tool(toolMemorySearch, "Search durable remembered facts for content matching a query. Use instead of memory_list when looking for something specific.", `{"type":"object","additionalProperties":false,"properties":{"query":{"type":"string","maxLength":500},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query"]}`),
 		tool(toolMessageList, "List messages sent by this bot in the current chat/topic, with Telegram message IDs, text previews and edit/delete state. Use it before editing or deleting and match the requested text to the preview instead of guessing by recency. Pass after_message_id=0 when locating a target; a nonzero value is an exclusive pagination cursor and omits that message itself.", `{"type":"object","additionalProperties":false,"properties":{"after_message_id":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["after_message_id","limit"]}`),
 		tool(toolSkillList, "List database-backed Starlark skills for this bot, including their active or failed latest version.", empty),
 		tool(toolSkillRun, "Run an active skill by name with a JSON input string. The skill is sandboxed and may use its scoped virtual filesystem.", `{"type":"object","additionalProperties":false,"properties":{"name":{"type":"string"},"input_json":{"type":"string","maxLength":64000}},"required":["name","input_json"]}`),
@@ -137,7 +139,7 @@ func (b *builtinTools) specs() []llm.Tool {
 // to a hidden one gets a specific refusal rather than an MCP lookup.
 func (b *builtinTools) handles(name string) bool {
 	switch name {
-	case toolTaskList, toolTaskCreate, toolTaskUpdate, toolTaskDelete, toolMemoryList, toolMemorySave, toolMemoryUpdate, toolMemoryDelete, toolMessageList, toolMessageSend, toolMessageEdit, toolMessageDelete, toolModerateDelete, toolModerateBan, toolModerateUnban, toolModerateMute, toolModeratePin, toolSkillList, toolSkillCreate, toolSkillUpdate, toolSkillTest, toolSkillRun, toolSkillDelete, toolVFSList, toolVFSRead, toolVFSWrite, toolVFSDelete, toolVFSStat, toolVFSUsage:
+	case toolTaskList, toolTaskCreate, toolTaskUpdate, toolTaskDelete, toolMemoryList, toolMemorySearch, toolMemorySave, toolMemoryUpdate, toolMemoryDelete, toolMessageList, toolMessageSend, toolMessageEdit, toolMessageDelete, toolModerateDelete, toolModerateBan, toolModerateUnban, toolModerateMute, toolModeratePin, toolSkillList, toolSkillCreate, toolSkillUpdate, toolSkillTest, toolSkillRun, toolSkillDelete, toolVFSList, toolVFSRead, toolVFSWrite, toolVFSDelete, toolVFSStat, toolVFSUsage:
 		return true
 	}
 	return false
@@ -500,6 +502,42 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			return toolError("No fact of the current user with that source_message_id. Use memory_list."), nil
 		}
 		return toolResult(map[string]any{"deleted": in.SourceMessageID}), nil
+	case toolMemorySearch:
+		var in struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if json.Unmarshal([]byte(args), &in) != nil || strings.TrimSpace(in.Query) == "" {
+			return toolError("Invalid arguments: query must be non-empty."), nil
+		}
+		if in.Limit == 0 {
+			in.Limit = 20
+		}
+		model := ""
+		var embedding []float32
+		if b.engine.Embedder != nil {
+			model = b.engine.Embedder.Model()
+			var err error
+			embedding, err = b.engine.Embedder.Embed(ctx, in.Query)
+			if err != nil {
+				return "", queue.WithPhase(err, "embed")
+			}
+		}
+		facts, err := store.SearchFacts(ctx, b.job.Scope, in.Query, model, embedding, in.Limit)
+		if err != nil {
+			return "", err
+		}
+		type memoryView struct {
+			SourceMessageID int64  `json:"source_message_id"`
+			SavedBy         string `json:"saved_by"`
+			Mine            bool   `json:"mine"`
+			Content         string `json:"content"`
+		}
+		views := make([]memoryView, 0, len(facts))
+		for _, m := range facts {
+			views = append(views, memoryView{SourceMessageID: m.SourceMessageID, SavedBy: m.Author(), Mine: m.CreatedBy == b.job.ActorUserID, Content: m.Content})
+		}
+		return toolResult(map[string]any{"memories": views, "query": in.Query}), nil
 	case toolSkillList:
 		skills, err := store.Skills(ctx, b.job.Scope.AgentID, b.job.Scope.BotID)
 		if err != nil {

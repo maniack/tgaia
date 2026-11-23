@@ -188,7 +188,7 @@ func TestLiveModelCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := take(t, e, "compact")
-	if err := e.Compact(ctx, *job); err != nil {
+	if err := e.CompactBackground(ctx, *job); err != nil {
 		t.Fatal(err)
 	}
 	history, err := e.DB.Agent().Context(ctx, scope, 0, 10)

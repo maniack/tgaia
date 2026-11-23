@@ -130,14 +130,24 @@ func tighter(a, b int) int {
 const replyLimit = 64000
 
 func (e *Engine) Handlers() map[string]queue.Handler {
-	return map[string]queue.Handler{"respond": e.Respond, "compact": e.Compact, "review_behavior": e.ReviewBehavior, "message_action": e.MessageAction, "media": e.Describe, "failure_notice": e.FailureNotice}
+	return map[string]queue.Handler{"respond": e.Respond, "compact": e.CompactBackground, "compact_session": e.CompactSession, "review_behavior": e.ReviewBehavior, "message_action": e.MessageAction, "media": e.Describe, "failure_notice": e.FailureNotice}
 }
 func modelContext(c agent.Context, budgets ...int) string {
 	budget := 100000
 	if len(budgets) > 0 {
 		budget = budgets[0]
 	}
-	header := "## Shared knowledge\n" + c.Knowledge + "\n## Saved memories of this chat\n" + explicitMemoryContext(c.ExplicitMemories, 16000) + "\n## Reactions to your messages\n" + reactionContext(c.Reactions, 12000) + "\n## Conversation summary\n" + c.Summary.Content + "\n## Conversation\n"
+	episodesSection := ""
+	if len(c.Episodes) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n## Recent session summaries\n")
+		for _, ep := range c.Episodes {
+			sb.WriteString(ep.Content)
+			sb.WriteString("\n")
+		}
+		episodesSection = sb.String()
+	}
+	header := "## Shared knowledge\n" + c.Knowledge + "\n## Saved memories of this chat\n" + explicitMemoryContext(c.ExplicitMemories, 16000) + "\n## Reactions to your messages\n" + reactionContext(c.Reactions, 12000) + "\n## Conversation summary\n" + c.Summary.Content + episodesSection + "\n## Conversation\n"
 	lines := []string{}
 	size := len(header)
 	for i := len(c.Messages) - 1; i >= 0; i-- {
@@ -771,7 +781,7 @@ func (e *Engine) FailureNotice(ctx context.Context, job queue.Job) error {
 	_, err := e.deliver(ctx, job, payload, sender, nil, false, []piece{{text: failureNoticeText(payload.FailureClass, payload.Prompt != "")}})
 	return err
 }
-func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
+func (e *Engine) CompactBackground(ctx context.Context, job queue.Job) error {
 	start := time.Now()
 	if err := e.DB.Agent().Check(ctx, job.Scope, 0); err != nil {
 		return err
@@ -844,6 +854,89 @@ func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
 		if _, err := e.DB.Queue().Enqueue(ctx, queue.Input{Scope: job.Scope, Key: key, Kind: "review_behavior", Payload: payload, MaxAttempts: 2}); err != nil {
 			e.log().Warn("failed to enqueue review_behavior", "chat_id", job.Scope.ChatID, slog.String("error", err.Error()))
 		}
+	}
+	e.log().Info("job finished",
+		"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+		"chat_id", job.Scope.ChatID, "attempt", job.Attempt,
+		"status", "completed", "terminal", outcome.Name,
+		"rounds", outcome.Rounds, "tool_calls", outcome.ToolCalls, "denied_calls", outcome.DeniedCalls,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
+	return nil
+}
+
+// CompactSession creates a detailed session episode from the most recent
+// conversation. It runs after a conversation goes quiet (silence-based trigger)
+// and stores a compact but complete summary of that session. Background
+// compaction later merges all session episodes into the cumulative long-term
+// summary, keeping detailed recent memory without flooding the LLM context.
+func (e *Engine) CompactSession(ctx context.Context, job queue.Job) error {
+	start := time.Now()
+	if err := e.DB.Agent().Check(ctx, job.Scope, 0); err != nil {
+		return err
+	}
+	var payload agent.JobPayload
+	if err := json.NewDecoder(bytes.NewReader(job.Payload)).Decode(&payload); err != nil || payload.ThroughID <= 0 {
+		return errors.New("invalid session compaction job")
+	}
+	history, err := e.DB.Agent().Context(ctx, job.Scope, payload.ThroughID, e.Config.Limit("compaction_messages"))
+	if err != nil {
+		return err
+	}
+	if len(history.Messages) == 0 {
+		return nil
+	}
+	// period_start = latest episode through_id before this session (the boundary).
+	periodStart := history.Summary.ThroughID
+	for _, ep := range history.Episodes {
+		if ep.ThroughID > periodStart {
+			periodStart = ep.ThroughID
+		}
+	}
+	var text strings.Builder
+	text.WriteString("## Messages to summarize\n")
+	through := int64(0)
+	budget := e.Config.Limit("compaction_input_bytes")
+	for _, m := range history.Messages {
+		line := promptMessage(m)
+		if text.Len()+len(line) > budget {
+			break
+		}
+		text.WriteString(line)
+		through = m.ID
+	}
+	if through <= 0 {
+		return nil
+	}
+	system, err := e.systemPrompt(ctx, job.Scope)
+	if err != nil {
+		return err
+	}
+	noThinking := false
+	sessionEvent := "\n## Event\n{\"type\":\"session_compaction\"}\n" +
+		"Write a concise but complete summary of these messages. " +
+		"Include all significant events, decisions, and information exchanged. " +
+		"Write in the same language the participants use. " +
+		"Record past events with their date (e.g. '2026-11-10: topic discussed').\n"
+	outcome, err := e.run(ctx, turn{
+		job:        job,
+		messages:   []llm.Message{{Role: "system", Content: system + e.runtimeContext(job.Scope.BotID)}, {Role: "user", Content: text.String() + sessionEvent}},
+		terminal:   []llm.Tool{summaryTool(e.Config.Limit("compaction_session_chars"))},
+		compaction: true,
+		budget:     e.Config.Limit("compaction_output_tokens"),
+		thinking:   &noThinking,
+	})
+	if err != nil {
+		return queue.WithPhase(err, "compact_session")
+	}
+	e.recordRunMetrics(ctx, outcome)
+	summary, err := summaryOf(outcome)
+	if err != nil {
+		return queue.WithPhase(err, "compact_session")
+	}
+	summary = boundSummary(summary, e.Config.Limit("compaction_session_chars"))
+	if err := e.DB.Agent().SaveSessionEpisode(ctx, job, periodStart, through, summary); err != nil {
+		return err
 	}
 	e.log().Info("job finished",
 		"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
@@ -940,10 +1033,21 @@ func compactionInput(c agent.Context, budgets ...int) (string, int64) {
 		budget = budgets[0]
 	}
 	var text strings.Builder
-	text.WriteString("## Current memory\n" + c.Summary.Content +
-		"\n## Reactions to your messages\n" + reactionContext(c.Reactions, 12000) +
-		"## New messages\n")
+	text.WriteString("## Current memory\n" + c.Summary.Content)
 	through := c.Summary.ThroughID
+	// Include session episodes between the background summary and the raw messages.
+	if len(c.Episodes) > 0 {
+		text.WriteString("\n## Session summaries\n")
+		for _, ep := range c.Episodes {
+			entry := ep.Content + "\n---\n"
+			if text.Len()+len(entry) > budget {
+				break
+			}
+			text.WriteString(entry)
+			through = ep.ThroughID
+		}
+	}
+	text.WriteString("\n## Reactions to your messages\n" + reactionContext(c.Reactions, 12000) + "## New messages\n")
 	for _, m := range c.Messages {
 		line := promptMessage(m)
 		if text.Len()+len(line) > budget {
@@ -1045,7 +1149,7 @@ func (e *Engine) capabilities(botID int64) string {
 	manifest := map[string]any{
 		"software":        "tgaia, an open-source Telegram agent written in Go (github.com/maniack/tgaia)",
 		"model":           e.Config.LLMModel,
-		"memory":          "per-chat conversation history, a periodically compacted long-term summary, and durable user facts with conservative automatic profile extraction (tools memory_list/memory_save/memory_update/memory_delete)",
+		"memory":          "per-chat conversation history, a periodically compacted long-term summary, and durable user facts with conservative automatic profile extraction (tools memory_list/memory_search/memory_save/memory_update/memory_delete)",
 		"scheduler":       "one-time and fixed-interval tasks per chat (tools task_list/task_create/task_update/task_delete); no calendar rules yet",
 		"images":          "images in the chat are described by the model and the description is kept in history",
 		"messages":        "current-chat bot messages can be listed, separately sent, edited and deleted through message_list/message_send/message_edit/message_delete",
