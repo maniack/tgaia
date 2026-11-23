@@ -34,14 +34,14 @@ func skillsServer(t *testing.T) (*Server, *storage.Database) {
 func TestSkillsAPIListsCatalogAndVersions(t *testing.T) {
 	server, db := skillsServer(t)
 	ctx := context.Background()
-	first, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "daily_brief", "Build a brief", `def run(input_json): return input_json`)
+	first, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "daily_brief", "Build a brief", `def run(input_json): return input_json`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Agent().FinishSkillTest(ctx, first, `{}`, `ok`, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "daily_brief", "Build a better brief", `def run(input_json): return "v2"`); err != nil {
+	if _, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "daily_brief", "Build a better brief", `def run(input_json): return "v2"`, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,7 +102,7 @@ func TestDeleteSkillAndVirtualFile(t *testing.T) {
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 
-	skill, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "my_skill", "A skill", `def run(input_json): return "ok"`)
+	skill, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "my_skill", "A skill", `def run(input_json): return "ok"`, false)
 	if err != nil {
 		t.Fatal(err)
 	}

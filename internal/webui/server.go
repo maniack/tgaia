@@ -145,6 +145,8 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/user-profile", s.userProfile)
 		r.Get("/api/skills", s.skills)
 		r.Delete("/api/skills", s.mutation((*Server).deleteSkill))
+		r.Post("/api/skills/approve", s.mutation((*Server).approveSkill))
+		r.Post("/api/skills/reject", s.mutation((*Server).rejectSkill))
 		r.Get("/api/vfs", s.virtualFiles)
 		r.Delete("/api/vfs", s.mutation((*Server).deleteVirtualFile))
 		r.Delete("/api/memory", s.mutation((*Server).deleteMemory))
@@ -377,6 +379,33 @@ func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
 	}
 	result(w, s.DB.Agent().DeleteSkill(r.Context(), in.AgentID, in.BotID, in.Name))
 }
+
+func (s *Server) approveSkill(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID string `json:"agent_id"`
+		BotID   int64  `json:"bot_id"`
+		Name    string `json:"name"`
+		Version int64  `json:"version"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Agent().ApproveSkill(r.Context(), in.AgentID, in.BotID, in.Name, in.Version))
+}
+
+func (s *Server) rejectSkill(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID string `json:"agent_id"`
+		BotID   int64  `json:"bot_id"`
+		Name    string `json:"name"`
+		Version int64  `json:"version"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Agent().RejectSkill(r.Context(), in.AgentID, in.BotID, in.Name, in.Version))
+}
+
 func (s *Server) deleteVirtualFile(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		AgentID  string `json:"agent_id"`

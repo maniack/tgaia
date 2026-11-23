@@ -522,9 +522,18 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 		} else if _, err := store.Skill(ctx, b.job.Scope.AgentID, b.job.Scope.BotID, in.Name, false); err == nil {
 			return toolError("Skill already exists; use skill_update."), nil
 		}
-		saved, err := store.SaveSkill(ctx, b.job.Scope.AgentID, b.job.Scope.BotID, b.job.ActorUserID, in.Name, in.Description, in.Source)
+		requiresApproval := false
+		if beh, err := b.engine.DB.Agent().ChatBehavior(ctx, b.job.Scope); err == nil {
+			if beh.Kind == "group" || beh.Kind == "supergroup" {
+				requiresApproval = true
+			}
+		}
+		saved, err := store.SaveSkill(ctx, b.job.Scope.AgentID, b.job.Scope.BotID, b.job.ActorUserID, in.Name, in.Description, in.Source, requiresApproval)
 		if err != nil {
 			return toolError("Invalid skill name, description or source."), nil
+		}
+		if requiresApproval {
+			return toolResult(map[string]any{"pending": saved, "next": "Skill is pending operator approval. It will be available after the operator approves it."}), nil
 		}
 		return toolResult(map[string]any{"draft": saved, "next": "Call skill_test with a representative JSON input."}), nil
 	case toolSkillTest:

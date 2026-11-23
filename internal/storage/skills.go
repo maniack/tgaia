@@ -54,11 +54,15 @@ type VirtualFileChange struct {
 	Content *string
 }
 
-func (a *AgentStore) SaveSkill(ctx context.Context, agentID string, botID, userID int64, name, description, source string) (Skill, error) {
+func (a *AgentStore) SaveSkill(ctx context.Context, agentID string, botID, userID int64, name, description, source string, requiresApproval bool) (Skill, error) {
 	var saved Skill
 	name, description, source = strings.TrimSpace(name), strings.TrimSpace(description), strings.TrimSpace(source)
 	if agentID == "" || botID <= 0 || userID <= 0 || !skillName.MatchString(name) || description == "" || len(description) > 500 || source == "" || len(source) > 64000 {
 		return saved, errors.New("invalid skill")
+	}
+	initialStatus := "draft"
+	if requiresApproval {
+		initialStatus = "pending"
 	}
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var latest Skill
@@ -68,7 +72,7 @@ func (a *AgentStore) SaveSkill(ctx context.Context, agentID string, botID, userI
 		}
 		version := latest.Version + 1
 		now := time.Now().UTC().UnixMilli()
-		row := map[string]any{"agent_id": agentID, "bot_id": botID, "name": name, "description": description, "version": version, "source": source, "status": "draft", "created_by": userID, "created_at": now, "updated_at": now}
+		row := map[string]any{"agent_id": agentID, "bot_id": botID, "name": name, "description": description, "version": version, "source": source, "status": initialStatus, "created_by": userID, "created_at": now, "updated_at": now}
 		if err := tx.Table("agent_skills").Create(row).Error; err != nil {
 			return err
 		}
@@ -120,18 +124,52 @@ func (a *AgentStore) FinishSkillTest(ctx context.Context, skill Skill, input, ou
 	if failure != "" {
 		status = "failed"
 	}
+	// pending skills wait for operator approval even when tests pass.
+	if skill.Status == "pending" && status == "active" {
+		status = "pending"
+	}
 	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if status == "active" {
 			if err := tx.Table("agent_skills").Where("agent_id=? AND bot_id=? AND name=? AND status='active'", skill.AgentID, skill.BotID, skill.Name).Update("status", "draft").Error; err != nil {
 				return err
 			}
 		}
-		result := tx.Table("agent_skills").Where("id=? AND status='draft'", skill.ID).Updates(map[string]any{"status": status, "test_input": input, "test_output": output, "error": failure, "updated_at": time.Now().UTC().UnixMilli()})
+		result := tx.Table("agent_skills").Where("id=? AND status IN ('draft','pending')", skill.ID).Updates(map[string]any{"status": status, "test_input": input, "test_output": output, "error": failure, "updated_at": time.Now().UTC().UnixMilli()})
 		if result.Error != nil || result.RowsAffected != 1 {
 			return errors.New("skill version changed")
 		}
 		return nil
 	})
+}
+
+// ApproveSkill moves a pending skill to draft so the bot can test and activate it.
+func (a *AgentStore) ApproveSkill(ctx context.Context, agentID string, botID int64, name string, version int64) error {
+	if agentID == "" || botID <= 0 || !skillName.MatchString(name) || version <= 0 {
+		return errors.New("invalid skill approval")
+	}
+	result := a.db.WithContext(ctx).Table("agent_skills").Where("agent_id=? AND bot_id=? AND name=? AND version=? AND status='pending'", agentID, botID, name, version).Update("status", "draft")
+	if result.Error != nil {
+		return errors.New("approval failed")
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("skill not found or not pending")
+	}
+	return nil
+}
+
+// RejectSkill removes a pending skill version.
+func (a *AgentStore) RejectSkill(ctx context.Context, agentID string, botID int64, name string, version int64) error {
+	if agentID == "" || botID <= 0 || !skillName.MatchString(name) || version <= 0 {
+		return errors.New("invalid skill rejection")
+	}
+	result := a.db.WithContext(ctx).Table("agent_skills").Where("agent_id=? AND bot_id=? AND name=? AND version=? AND status='pending'", agentID, botID, name, version).Delete(&Skill{})
+	if result.Error != nil {
+		return errors.New("rejection failed")
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("skill not found or not pending")
+	}
+	return nil
 }
 
 func (a *AgentStore) DeleteSkill(ctx context.Context, agentID string, botID int64, name string) error {

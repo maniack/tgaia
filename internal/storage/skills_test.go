@@ -8,16 +8,16 @@ import (
 )
 
 func TestSkillVersionsAndActivation(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 39)
+	db, _ := databasesAtVersion(t, config.SQLite, 40)
 	ctx := context.Background()
-	first, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "daily_brief", "Build a concise brief", `def run(input_json): return input_json`)
+	first, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "daily_brief", "Build a concise brief", `def run(input_json): return input_json`, false)
 	if err != nil || first.Version != 1 || first.Status != "draft" {
 		t.Fatalf("first=%+v err=%v", first, err)
 	}
 	if err := db.Agent().FinishSkillTest(ctx, first, `{}`, `ok`, ""); err != nil {
 		t.Fatal(err)
 	}
-	second, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "daily_brief", "Build a better brief", `def run(input_json): return "v2"`)
+	second, err := db.Agent().SaveSkill(ctx, "test", 1, 7, "daily_brief", "Build a better brief", `def run(input_json): return "v2"`, false)
 	if err != nil || second.Version != 2 {
 		t.Fatalf("second=%+v err=%v", second, err)
 	}

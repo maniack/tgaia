@@ -14,7 +14,7 @@ var migrations embed.FS
 
 // Migrate is explicit: normal startup never changes the schema. In Kubernetes
 // run this as a migration Job before rolling out consumers.
-func (d *Database) Migrate(ctx context.Context) error { return d.migrate(ctx, 39) }
+func (d *Database) Migrate(ctx context.Context) error { return d.migrate(ctx, 40) }
 
 func (d *Database) migrate(ctx context.Context, target int) error {
 	err := d.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -26,7 +26,7 @@ func (d *Database) migrate(ctx context.Context, target int) error {
 		if err := tx.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)").Error; err != nil {
 			return err
 		}
-		for index, path := range []string{"migrations/001_queue.sql", "migrations/002_bot_messages.sql", "migrations/003_bots_and_access.sql", "migrations/004_poc.sql", "migrations/005_settings.sql", "migrations/006_polling.sql", "migrations/007_runtime_identity.sql", "migrations/008_memory_revision.sql", "migrations/009_mcp.sql", "migrations/010_admin.sql", "migrations/011_telegram.sql", "migrations/012_reply_links.sql", "migrations/013_roles.sql", "migrations/014_audit.sql", "migrations/015_quotas.sql", "migrations/016_setting_scopes.sql", "migrations/017_explicit_memory.sql", "migrations/018_chat_memory.sql", "migrations/019_reply_to.sql", "migrations/020_forum_state.sql", "migrations/021_user_telegram_profile.sql", "migrations/022_skills_vfs.sql", "migrations/023_message_reactions.sql", "migrations/024_bot_behavior.sql", "migrations/025_failure_class.sql", "migrations/026_chat_tool_limits.sql", "migrations/027_allow_skip.sql", "migrations/028_bot_tool_limits.sql", "migrations/029_behavior_corrections.sql", "migrations/030_compaction_count.sql", "migrations/031_fix_supergroup_thread_ids.sql", "migrations/032_choice_sessions.sql", "migrations/033_bot_avatar_cache.sql", "migrations/034_queue_priority.sql", "migrations/035_task_limits.sql", "migrations/036_vfs_chat_only.sql", "migrations/037_queue_cancel.sql", "migrations/038_queue_paused_scopes.sql", "migrations/039_queue_phase.sql"} {
+		for index, path := range []string{"migrations/001_queue.sql", "migrations/002_bot_messages.sql", "migrations/003_bots_and_access.sql", "migrations/004_poc.sql", "migrations/005_settings.sql", "migrations/006_polling.sql", "migrations/007_runtime_identity.sql", "migrations/008_memory_revision.sql", "migrations/009_mcp.sql", "migrations/010_admin.sql", "migrations/011_telegram.sql", "migrations/012_reply_links.sql", "migrations/013_roles.sql", "migrations/014_audit.sql", "migrations/015_quotas.sql", "migrations/016_setting_scopes.sql", "migrations/017_explicit_memory.sql", "migrations/018_chat_memory.sql", "migrations/019_reply_to.sql", "migrations/020_forum_state.sql", "migrations/021_user_telegram_profile.sql", "migrations/022_skills_vfs.sql", "migrations/023_message_reactions.sql", "migrations/024_bot_behavior.sql", "migrations/025_failure_class.sql", "migrations/026_chat_tool_limits.sql", "migrations/027_allow_skip.sql", "migrations/028_bot_tool_limits.sql", "migrations/029_behavior_corrections.sql", "migrations/030_compaction_count.sql", "migrations/031_fix_supergroup_thread_ids.sql", "migrations/032_choice_sessions.sql", "migrations/033_bot_avatar_cache.sql", "migrations/034_queue_priority.sql", "migrations/035_task_limits.sql", "migrations/036_vfs_chat_only.sql", "migrations/037_queue_cancel.sql", "migrations/038_queue_paused_scopes.sql", "migrations/039_queue_phase.sql", "migrations/040_skill_pending.sql"} {
 			version := index + 1
 			if version > target {
 				break
@@ -62,6 +62,11 @@ func (d *Database) migrate(ctx context.Context, target int) error {
 				cancelDDL = `ALTER TABLE queue_jobs DROP CONSTRAINT IF EXISTS queue_jobs_status_check;ALTER TABLE queue_jobs ADD CONSTRAINT queue_jobs_status_check CHECK(status IN('pending','leased','retry','completed','dead','cancelled'))`
 			}
 			ddl = strings.ReplaceAll(ddl, "{{STATUS_CANCEL_DDL}}", cancelDDL)
+			skillPendingDDL := `CREATE TABLE agent_skills_v40 (id ` + id + `,agent_id TEXT NOT NULL,bot_id BIGINT NOT NULL,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',version BIGINT NOT NULL,source TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN('draft','active','failed','pending')),test_input TEXT NOT NULL DEFAULT '{}',test_output TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',created_by BIGINT NOT NULL,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL,UNIQUE(agent_id,bot_id,name,version));INSERT INTO agent_skills_v40 SELECT id,agent_id,bot_id,name,description,version,source,status,test_input,test_output,error,created_by,created_at,updated_at FROM agent_skills;DROP TABLE agent_skills;ALTER TABLE agent_skills_v40 RENAME TO agent_skills;CREATE INDEX agent_skills_catalog ON agent_skills(agent_id,bot_id,name,version DESC)`
+			if tx.Dialector.Name() == "postgres" {
+				skillPendingDDL = `ALTER TABLE agent_skills DROP CONSTRAINT IF EXISTS agent_skills_status_check;ALTER TABLE agent_skills ADD CONSTRAINT agent_skills_status_check CHECK(status IN('draft','active','failed','pending'))`
+			}
+			ddl = strings.ReplaceAll(ddl, "{{SKILL_PENDING_DDL}}", skillPendingDDL)
 			for _, statement := range strings.Split(ddl, ";") {
 				if strings.TrimSpace(statement) == "" {
 					continue
