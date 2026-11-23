@@ -54,13 +54,13 @@ func TestChatMemoryMigrationCollapsesTopicSummaries(t *testing.T) {
 }
 
 func TestAdminDeleteExplicitMemory(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 40)
+	db, _ := databasesAtVersion(t, config.SQLite, 42)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "remember this", SentAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.orm.Exec("INSERT INTO explicit_memories(agent_id,bot_id,chat_id,thread_id,source_message_id,source_update_id,created_by,content,created_at) VALUES ('test',1,100,0,1,1,7,'a fact',?)", time.Now().UnixMilli()).Error; err != nil {
+	if err := db.orm.Exec("INSERT INTO memory_episodes(agent_id,bot_id,chat_id,kind,period_start,through_id,source_message_id,source_update_id,created_by,content,embedding_model,embedding,created_at) VALUES ('test',1,100,'fact',1,1,1,1,7,'a fact','','[]',?)", time.Now().UnixMilli()).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Agent().AdminDeleteExplicitMemory(ctx, scope, 1); err != nil {
@@ -72,7 +72,7 @@ func TestAdminDeleteExplicitMemory(t *testing.T) {
 }
 
 func TestUserProfileMemoriesAggregateAcrossChats(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 40)
+	db, _ := databasesAtVersion(t, config.SQLite, 42)
 	ctx := context.Background()
 	empty, err := db.Agent().UserProfileMemories(ctx, "test", 7)
 	if err != nil || empty == nil || len(empty) != 0 {
@@ -84,7 +84,7 @@ func TestUserProfileMemoriesAggregateAcrossChats(t *testing.T) {
 		if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: messageID, MessageID: messageID, Text: "remember this", Name: "Ada", SentAt: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.orm.Exec("INSERT INTO explicit_memories(agent_id,bot_id,chat_id,thread_id,source_message_id,source_update_id,created_by,content,created_at) VALUES ('test',1,?,0,?,?,7,?,?)", chatID, messageID, messageID, fmt.Sprintf("fact %d", i), time.Now().UnixMilli()+int64(i)).Error; err != nil {
+		if err := db.orm.Exec("INSERT INTO memory_episodes(agent_id,bot_id,chat_id,kind,period_start,through_id,source_message_id,source_update_id,created_by,content,embedding_model,embedding,created_at) VALUES ('test',1,?,'fact',?,?,?,?,7,?,'','[]',?)", chatID, messageID, messageID, messageID, messageID, fmt.Sprintf("fact %d", i), time.Now().UnixMilli()+int64(i)).Error; err != nil {
 			t.Fatal(err)
 		}
 	}

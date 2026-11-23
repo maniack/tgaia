@@ -1149,7 +1149,7 @@ func (e *Engine) capabilities(botID int64) string {
 	manifest := map[string]any{
 		"software":        "tgaia, an open-source Telegram agent written in Go (github.com/maniack/tgaia)",
 		"model":           e.Config.LLMModel,
-		"memory":          "per-chat conversation history, a periodically compacted long-term summary, and durable user facts with conservative automatic profile extraction (tools memory_list/memory_save/memory_update/memory_delete)",
+		"memory":          "per-chat conversation history, a periodically compacted long-term summary, and durable user facts with conservative automatic profile extraction (tools memory_list/memory_search/memory_save/memory_update/memory_delete)",
 		"scheduler":       "one-time and fixed-interval tasks per chat (tools task_list/task_create/task_update/task_delete); no calendar rules yet",
 		"images":          "images in the chat are described by the model and the description is kept in history",
 		"messages":        "current-chat bot messages can be listed, separately sent, edited and deleted through message_list/message_send/message_edit/message_delete",

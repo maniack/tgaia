@@ -244,7 +244,7 @@ func (a *AgentStore) Tick(ctx context.Context, window time.Duration, policies ..
  MAX(CASE WHEN m.sent_at<=? THEN m.id END) AS through_id,
  SUM(CASE WHEN m.sent_at<=? THEN 1 ELSE 0 END) AS eligible,COUNT(*) AS pending FROM conversation_messages m
  JOIN chat_directory c ON c.agent_id=m.agent_id AND c.bot_id=m.bot_id AND c.chat_id=m.chat_id
- LEFT JOIN (SELECT agent_id,bot_id,chat_id,MAX(through_id) AS through_id FROM memory_episodes GROUP BY agent_id,bot_id,chat_id) e ON e.agent_id=m.agent_id AND e.bot_id=m.bot_id AND e.chat_id=m.chat_id
+ LEFT JOIN (SELECT agent_id,bot_id,chat_id,MAX(through_id) AS through_id FROM memory_episodes WHERE kind!='fact' GROUP BY agent_id,bot_id,chat_id) e ON e.agent_id=m.agent_id AND e.bot_id=m.bot_id AND e.chat_id=m.chat_id
  WHERE c.blocked=? AND m.id>COALESCE(e.through_id,0)
  AND NOT EXISTS (SELECT 1 FROM queue_jobs j WHERE j.agent_id=m.agent_id AND j.bot_id=m.bot_id AND j.chat_id=m.chat_id AND j.kind='compact_session' AND j.status IN ('pending','retry','leased'))
  GROUP BY m.agent_id,m.bot_id,m.chat_id,e.through_id,c.memory_revision ORDER BY MIN(m.id) LIMIT 64`, sessionCutoff, sessionCutoff, false).Scan(&sessionScopes).Error; err != nil {
@@ -304,7 +304,7 @@ func (a *AgentStore) OperationalStatus(ctx context.Context) (OperationalStatus, 
 		{"SELECT COUNT(*) FROM chat_directory", &result.Chats},
 		{"SELECT COUNT(*) FROM seen_users", &result.Users},
 		{"SELECT COUNT(*) FROM conversation_messages", &result.Messages},
-		{"SELECT COUNT(*) FROM explicit_memories", &result.RememberedFacts},
+		{"SELECT COUNT(*) FROM memory_episodes WHERE kind='fact'", &result.RememberedFacts},
 		{"SELECT COUNT(*) FROM scheduled_tasks WHERE active=TRUE", &result.ActiveTasks},
 		{"SELECT COUNT(*) FROM outbound_deliveries WHERE state IN ('sending','uncertain')", &result.UncertainDelivery},
 		{"SELECT COUNT(*) FROM tool_steps WHERE state IN ('started','uncertain') AND step LIKE 'call:%'", &result.UncertainTools},

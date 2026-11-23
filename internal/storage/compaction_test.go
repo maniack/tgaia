@@ -14,7 +14,7 @@ import (
 
 // Compaction runs per batch and never twice for one chat at the same time.
 func TestCompactionBatchingAndScopeDedup(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 41)
+	db, _ := databasesAtVersion(t, config.SQLite, 42)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	add := func(id int64, age time.Duration) {
@@ -77,7 +77,7 @@ func TestCompactionBatchingAndScopeDedup(t *testing.T) {
 	}
 	// Fresh messages are not eligible, but too many unsummarized ones force a
 	// compaction of whatever has already aged out.
-	db2, _ := databasesAtVersion(t, config.SQLite, 41)
+	db2, _ := databasesAtVersion(t, config.SQLite, 42)
 	fresh := func(id int64, age time.Duration) {
 		t.Helper()
 		if err := db2.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: id, MessageID: id, Text: "m", SentAt: time.Now().Add(-age)}); err != nil {
@@ -98,7 +98,7 @@ func TestCompactionBatchingAndScopeDedup(t *testing.T) {
 	}
 	// Default policy keeps the historical per-message behaviour for callers that
 	// pass none (tests), so existing expectations hold.
-	db3, _ := databasesAtVersion(t, config.SQLite, 41)
+	db3, _ := databasesAtVersion(t, config.SQLite, 42)
 	if err := db3.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "m", SentAt: time.Now().Add(-2 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestCompactionBatchingAndScopeDedup(t *testing.T) {
 // the time window, Tick must still enqueue one compaction that covers all but
 // the last MinMessages messages (count-based through_id, not time-based).
 func TestForcedCompactionUsesCountBasedThroughID(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 41)
+	db, _ := databasesAtVersion(t, config.SQLite, 42)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	for id := int64(1); id <= 8; id++ {
@@ -145,7 +145,7 @@ func TestForcedCompactionUsesCountBasedThroughID(t *testing.T) {
 // Tick must not enqueue a second run for a recurring task while the previous
 // run is still pending or leased (coalesce/skip-if-behind).
 func TestTickCoalescesRecurringTask(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 41)
+	db, _ := databasesAtVersion(t, config.SQLite, 42)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "hi", SentAt: time.Now()}); err != nil {
@@ -181,7 +181,7 @@ func TestTickCoalescesRecurringTask(t *testing.T) {
 // CancelTaskJobs moves pending task runs to dead/cancelled and does not touch
 // runs that are already leased or completed.
 func TestCancelTaskJobs(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 41)
+	db, _ := databasesAtVersion(t, config.SQLite, 42)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	if err := db.Agent().Accept(ctx, agent.Incoming{Scope: scope, UserID: 7, UpdateID: 1, MessageID: 1, Text: "hi", SentAt: time.Now()}); err != nil {
@@ -220,7 +220,7 @@ func TestCancelTaskJobs(t *testing.T) {
 // TestSessionEpisodes verifies that session episodes are stored, returned by
 // Context, and used as the history floor so raw messages load after them.
 func TestSessionEpisodes(t *testing.T) {
-	db, _ := databasesAtVersion(t, config.SQLite, 41)
+	db, _ := databasesAtVersion(t, config.SQLite, 42)
 	ctx := context.Background()
 	scope := chat.Scope{AgentID: "test", BotID: 1, ChatID: 100}
 	add := func(id int64) {

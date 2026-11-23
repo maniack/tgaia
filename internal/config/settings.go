@@ -10,7 +10,7 @@ import (
 )
 
 func (c App) Settings() map[string]string {
-	values := map[string]string{"observability.otlp_endpoint": c.OTLPEndpoint, "mcp.servers": EncodeMCP(c.MCPServers), "log_level": strings.ToLower(c.LogLevel.String()), "agent_id": c.AgentID, "listen": c.Listen, "public_url": c.PublicURL, "role": c.Role, "llm.endpoint": c.LLMEndpoint, "llm.model": c.LLMModel, "llm.api_key": c.LLMKey.Reveal(), "llm.mock": strconv.FormatBool(c.MockLLM), "llm.thinking": strconv.FormatBool(c.LLMThinking), "telegram.mode": c.TelegramMode, "telegram.admin_tools": strconv.FormatBool(c.TelegramAdminTools), "memory.embedding_model": c.EmbeddingModel, "memory.window": c.MemoryWindow.String(), "memory.interval": c.MemoryInterval.String(), "memory.retention": c.MemoryRetention.String()}
+	values := map[string]string{"observability.otlp_endpoint": c.OTLPEndpoint, "mcp.servers": EncodeMCP(c.MCPServers), "log_level": strings.ToLower(c.LogLevel.String()), "agent_id": c.AgentID, "listen": c.Listen, "public_url": c.PublicURL, "role": c.Role, "llm.endpoint": c.LLMEndpoint, "llm.model": c.LLMModel, "llm.api_key": c.LLMKey.Reveal(), "llm.mock": strconv.FormatBool(c.MockLLM), "llm.thinking": strconv.FormatBool(c.LLMThinking), "telegram.mode": c.TelegramMode, "telegram.admin_tools": strconv.FormatBool(c.TelegramAdminTools), "memory.embedding_model": c.EmbeddingModel, "memory.window": c.MemoryWindow.String(), "memory.interval": c.MemoryInterval.String(), "memory.retention": c.MemoryRetention.String(), "memory.session_window": c.MemorySessionWindow.String()}
 	for name, spec := range limitSpecs {
 		value := c.Limits[name]
 		if value == "" {
@@ -85,6 +85,8 @@ func (c App) WithSettings(values map[string]string) (App, error) {
 			c.MemoryInterval, err = time.ParseDuration(value)
 		case "memory.retention":
 			c.MemoryRetention, err = time.ParseDuration(value)
+		case "memory.session_window":
+			c.MemorySessionWindow, err = time.ParseDuration(value)
 		case "memory.embedding_model":
 			c.EmbeddingModel = value
 		default:
