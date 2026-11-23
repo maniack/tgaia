@@ -150,6 +150,8 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/vfs", s.virtualFiles)
 		r.Delete("/api/vfs", s.mutation((*Server).deleteVirtualFile))
 		r.Delete("/api/memory", s.mutation((*Server).deleteMemory))
+		r.Patch("/api/memory", s.mutation((*Server).updateMemory))
+		r.Delete("/api/memory/episode", s.mutation((*Server).deleteEpisode))
 		r.Post("/api/chat-block", s.mutation((*Server).chatBlock))
 		r.Post("/api/user-block", s.mutation((*Server).userBlock))
 		r.Post("/api/user-role", s.mutation((*Server).userRole))
@@ -442,6 +444,34 @@ func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	result(w, s.DB.Agent().AdminDeleteExplicitMemory(r.Context(), chat.Scope{AgentID: in.AgentID, BotID: in.BotID, ChatID: in.ChatID, ThreadID: in.ThreadID}, in.SourceMessageID))
 }
+func (s *Server) updateMemory(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID         string `json:"agent_id"`
+		BotID           int64  `json:"bot_id"`
+		ChatID          int64  `json:"chat_id"`
+		SourceMessageID int64  `json:"source_message_id"`
+		Content         string `json:"content"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Agent().AdminUpdateFact(r.Context(), chat.Scope{AgentID: in.AgentID, BotID: in.BotID, ChatID: in.ChatID}, in.SourceMessageID, in.Content))
+}
+
+func (s *Server) deleteEpisode(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID     string `json:"agent_id"`
+		BotID       int64  `json:"bot_id"`
+		ChatID      int64  `json:"chat_id"`
+		Kind        string `json:"kind"`
+		PeriodStart int64  `json:"period_start"`
+	}
+	if !read(w, r, &in) {
+		return
+	}
+	result(w, s.DB.Agent().AdminDeleteEpisode(r.Context(), chat.Scope{AgentID: in.AgentID, BotID: in.BotID, ChatID: in.ChatID}, in.Kind, in.PeriodStart))
+}
+
 func (s *Server) chatBlock(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		AgentID string `json:"agent_id"`

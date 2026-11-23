@@ -75,10 +75,6 @@
     <article class="transcript">
       <div class="scope-head"><button id="conversation-back" class="back-button quiet" type="button" aria-label="Back to conversations">‹</button><div id="scope-heading" class="scope-heading">Select a conversation</div><div id="scope-actions" class="actions"></div></div>
       <div class="transcript-body">
-        <details id="conversation-memory" class="memory">
-          <summary><svg class="icon"><use href="#i-brain"/></svg><span>Memory summary</span></summary>
-          <p id="summary">The summary for the selected bot and chat will appear here.</p>
-        </details>
         <div id="history" class="history"></div>
       </div>
     </article>
@@ -208,12 +204,16 @@
     <div class="section-head"><div><h2>What the agent remembers</h2><p class="section-lead">These layers are added to the model context in this order.</p></div><div class="controls"><label>Conversation <span class="select"><select id="memory-scope"></select></span></label></div></div>
     <div class="memory-layers">
       <article class="memory-layer summary-layer">
-        <div class="memory-layer-head"><span class="memory-layer-icon"><svg class="icon"><use href="#i-brain"/></svg></span><div><h3>Conversation summary</h3><p>Generated from older messages and shared across topics.</p></div></div>
+        <div class="memory-layer-head"><span class="memory-layer-icon"><svg class="icon"><use href="#i-brain"/></svg></span><div><h3>Long-term summary</h3><p>Compressed from older messages. Shared across topics.</p></div><div class="memory-layer-actions"><button id="memory-bg-delete" class="destructive-text quiet" type="button">Delete</button></div></div>
         <div class="memory-metrics"><span id="memory-checkpoint">No checkpoint yet</span><span id="memory-pending">0 recent messages</span></div>
         <p id="memory-summary" class="memory-copy">No summary yet. Older messages are summarized automatically.</p>
       </article>
+      <article class="memory-layer episodes-layer">
+        <div class="memory-layer-head"><span class="memory-layer-icon"><svg class="icon"><use href="#i-clock"/></svg></span><div><h3>Session episodes</h3><p>Recent per-session summaries, newer than the long-term checkpoint.</p></div></div>
+        <div id="memory-episodes" class="memory-facts"><p class="empty">No session episodes yet.</p></div>
+      </article>
       <article class="memory-layer facts-layer">
-        <div class="memory-layer-head"><span class="memory-layer-icon"><svg class="icon"><use href="#i-book"/></svg></span><div><h3>Remembered facts</h3><p>Saved only when a person explicitly asks the bot to remember.</p></div></div>
+        <div class="memory-layer-head"><span class="memory-layer-icon"><svg class="icon"><use href="#i-book"/></svg></span><div><h3>Remembered facts</h3><p>Saved when a person explicitly asks the bot to remember something.</p></div></div>
         <div id="memory-facts" class="memory-facts"><p class="empty">No saved facts in this conversation.</p></div>
       </article>
       <form id="knowledge-form" class="memory-layer knowledge-layer">

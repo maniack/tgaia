@@ -476,6 +476,32 @@ func (a *AgentStore) AdminDeleteExplicitMemory(ctx context.Context, scope chat.S
 	return nil
 }
 
+func (a *AgentStore) AdminUpdateFact(ctx context.Context, scope chat.Scope, sourceMessageID int64, content string) error {
+	if !scope.Valid() || sourceMessageID <= 0 || strings.TrimSpace(content) == "" || len(content) > 2000 {
+		return errors.New("invalid explicit memory")
+	}
+	result := memoryScoped(a.db.WithContext(ctx).Table("memory_episodes"), scope).
+		Where("kind='fact' AND source_message_id=?", sourceMessageID).
+		Updates(map[string]any{"content": strings.TrimSpace(content), "created_at": time.Now().UTC().UnixMilli()})
+	if result.Error != nil || result.RowsAffected != 1 {
+		return errors.New("explicit memory not found")
+	}
+	return nil
+}
+
+func (a *AgentStore) AdminDeleteEpisode(ctx context.Context, scope chat.Scope, kind string, periodStart int64) error {
+	if !scope.Valid() || (kind != "session" && kind != "background") {
+		return errors.New("invalid episode")
+	}
+	result := memoryScoped(a.db.WithContext(ctx).Table("memory_episodes"), scope).
+		Where("kind=? AND period_start=?", kind, periodStart).
+		Delete(&struct{}{})
+	if result.Error != nil || result.RowsAffected != 1 {
+		return errors.New("episode not found")
+	}
+	return nil
+}
+
 // UserProfileMemories projects the same explicit memories used by the agent
 // into a person-centric view. There is intentionally no second profile store
 // that could drift away from conversation memory.
