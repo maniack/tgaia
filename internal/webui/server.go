@@ -425,17 +425,32 @@ func (s *Server) task(w http.ResponseWriter, r *http.Request) {
 	if in.ID == "" {
 		in.ID = uuid.NewString()
 	}
-	result(w, s.DB.Agent().PutTask(r.Context(), in, in.Version, s.Config.Limit("active_tasks_per_user"), s.Config.Limit("system_prompt_bytes")))
+	if err := s.DB.Agent().PutTask(r.Context(), in, in.Version, s.Config.Limit("active_tasks_per_user"), s.Config.Limit("system_prompt_bytes")); err != nil {
+		result(w, err)
+		return
+	}
+	if in.Version > 0 {
+		_ = s.DB.Agent().CancelTaskJobs(r.Context(), in.AgentID, in.BotID, in.ChatID, in.ID)
+	}
+	result(w, nil)
 }
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		ID      string `json:"id"`
 		Version int64  `json:"version"`
+		AgentID string `json:"agent_id"`
+		BotID   int64  `json:"bot_id"`
+		ChatID  int64  `json:"chat_id"`
 	}
 	if !read(w, r, &in) {
 		return
 	}
-	result(w, s.DB.Agent().DeleteTask(r.Context(), in.ID, in.Version))
+	if err := s.DB.Agent().DeleteTask(r.Context(), in.ID, in.Version); err != nil {
+		result(w, err)
+		return
+	}
+	_ = s.DB.Agent().CancelTaskJobs(r.Context(), in.AgentID, in.BotID, in.ChatID, in.ID)
+	result(w, nil)
 }
 
 // UI connection settings are managed out of band to prevent locking administrators out.

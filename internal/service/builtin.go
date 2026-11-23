@@ -288,6 +288,15 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			}
 			return toolResult(map[string]any{"existing_tasks": views, "instruction": "Review existing_tasks. If the requested task is semantically equivalent to one that is already active, tell the user it already exists instead of creating a new one. Otherwise call task_create again with the same parameters and confirmed=true."}), nil
 		}
+		// Dedup: if an active task with the same prompt and interval already
+		// exists for this user, return it instead of creating a duplicate.
+		// This catches the case where the model calls task_create confirmed=true
+		// multiple times in one turn for identical parameters.
+		if existing, dupErr := store.FindDuplicateTask(ctx, b.job.Scope, b.job.ActorUserID, strings.TrimSpace(in.Prompt), in.Interval*1000); dupErr == nil && existing != nil {
+			view := b.view(*existing, nil)
+			view.Confirmation = confirmation(view)
+			return toolResult(map[string]any{"created": view, "instruction": "Task already exists (returned existing). Tell the user the first run exactly as in confirmation (date, weekday, time and timezone). Do not recompute it."}), nil
+		}
 		runAt, loc, err := in.When.resolve(b.now)
 		if err != nil {
 			return toolError("Cannot resolve the time: " + err.Error()), nil

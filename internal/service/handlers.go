@@ -819,7 +819,14 @@ func (e *Engine) Compact(ctx context.Context, job queue.Job) error {
 	if reviewEvery <= 0 {
 		reviewEvery = 3
 	}
-	if compactionCount%int64(reviewEvery) == 0 {
+	reviewMinMessages := e.Config.Limit("behavior_review_min_messages")
+	if reviewMinMessages <= 0 {
+		reviewMinMessages = 10
+	}
+	// Only trigger a review when this compaction covered enough messages; tiny
+	// drip-compactions (1–2 messages after a burst) should not each count toward
+	// the review cadence, otherwise a single burst produces dozens of reviews.
+	if compactionCount%int64(reviewEvery) == 0 && len(history.Messages) >= reviewMinMessages {
 		key := fmt.Sprintf("review:%d", compactionCount)
 		payload, _ := json.Marshal(agent.JobPayload{})
 		if _, err := e.DB.Queue().Enqueue(ctx, queue.Input{Scope: job.Scope, Key: key, Kind: "review_behavior", Payload: payload, MaxAttempts: 2}); err != nil {

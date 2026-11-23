@@ -387,3 +387,22 @@ func (a *AgentStore) Task(ctx context.Context, s chat.Scope, id string) (agent.T
 }
 
 var ErrTaskNotFound = errors.New("task not found")
+
+// FindDuplicateTask returns the first active task in the scope that matches the
+// given user, prompt and interval. Returns nil without error when no duplicate exists.
+func (a *AgentStore) FindDuplicateTask(ctx context.Context, s chat.Scope, userID int64, prompt string, intervalMS int64) (*agent.Task, error) {
+	if !s.Valid() || userID == 0 || prompt == "" {
+		return nil, nil
+	}
+	var task agent.Task
+	err := scoped(a.db.WithContext(ctx).Table("scheduled_tasks"), s).
+		Where("thread_id=? AND user_id=? AND active=? AND interval_ms=? AND prompt=?", s.ThreadID, userID, true, intervalMS, prompt).
+		Order("run_at ASC").Limit(1).Take(&task).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.New("duplicate task check failed")
+	}
+	return &task, nil
+}

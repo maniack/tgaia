@@ -270,6 +270,31 @@ func TestTaskToolsRespectOwnershipAndQuota(t *testing.T) {
 	}
 }
 
+// Multiple confirmed task_create calls with identical parameters in one turn
+// return the same task instead of creating duplicates.
+func TestTaskCreateDeduplicatesSameParameters(t *testing.T) {
+	e, _, _, scope := engineFixture(t)
+	ctx := context.Background()
+	e.Now = func() time.Time { return time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC) }
+	createArgs := `{"prompt":"напоминай каждую минуту","when":{"date":"","weekday":"","time":"","timezone":"","delay_seconds":60},"interval_seconds":60,"confirmed":true}`
+	m := &scriptedModel{reply: `{"reply":"ok"}`, turns: []llm.Message{
+		call("c1", toolTaskCreate, createArgs),
+		call("c2", toolTaskCreate, createArgs),
+		call("c3", toolTaskCreate, createArgs),
+		finish("done"),
+	}}
+	e.Model = m
+	accept(t, e, scope, 1, "напоминай каждую минуту", true)
+	job := take(t, e, "respond")
+	if err := e.Respond(ctx, *job); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := e.DB.Agent().Dashboard(ctx)
+	if len(d.Tasks) != 1 {
+		t.Fatalf("expected 1 task after 3 identical creates, got %d: %+v", len(d.Tasks), d.Tasks)
+	}
+}
+
 // Secrets are refused by memory_save even if the model tries.
 func TestSaveMemoryRefusesSecrets(t *testing.T) {
 	e, _, _, scope := engineFixture(t)
