@@ -886,6 +886,20 @@ func (a *AgentStore) HasBotReplyAfterMessage(ctx context.Context, s chat.Scope, 
 		Where("role='assistant' AND id > ?", row.ID).Limit(1).Count(&count).Error
 	return count > 0, err
 }
+
+// HasPendingRespondInScope reports whether there are pending or retrying respond
+// jobs in the scope with a higher ID than afterJobID. Used to defer a respond
+// when later messages are queued so the last job answers the full conversation
+// in one turn instead of N sequential replies.
+func (a *AgentStore) HasPendingRespondInScope(ctx context.Context, s chat.Scope, afterJobID int64) (bool, error) {
+	var count int64
+	err := a.db.WithContext(ctx).Table("queue_jobs").
+		Where("agent_id=? AND bot_id=? AND chat_id=? AND thread_id=? AND kind='respond' AND status IN ('pending','retry') AND id > ?",
+			s.AgentID, s.BotID, s.ChatID, s.ThreadID, afterJobID).
+		Count(&count).Error
+	return count > 0, err
+}
+
 func (a *AgentStore) SaveMediaText(ctx context.Context, job queue.Job, id, update int64, text string) error {
 	if len(text) > 32000 {
 		return errors.New("attachment text too large")

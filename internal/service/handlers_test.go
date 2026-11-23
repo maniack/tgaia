@@ -443,3 +443,62 @@ func TestRespondJobSkippedIfTaskAlreadyReplied(t *testing.T) {
 		t.Fatalf("respond job sent %d extra message(s) after task already replied", sender.calls-callsBefore)
 	}
 }
+
+// TestRespondJobsBatchedWhenNewerPending verifies that when multiple respond
+// jobs pile up in a scope, only the last one sends a reply. Earlier jobs skip
+// when they detect a pending job with a higher queue ID.
+func TestRespondJobsBatchedWhenNewerPending(t *testing.T) {
+	e, model, sender, scope := engineFixture(t)
+	ctx := context.Background()
+
+	// Seed the chat directory with group_response="all" so each Accept from any
+	// user creates an unaddressed (Addressed=false) respond job.
+	if err := e.DB.Agent().Accept(ctx, agent.Incoming{
+		Scope: scope, UpdateID: 999, MessageID: 999, UserID: 7,
+		ChatType: "group", Text: "seed", SentAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := e.DB.Agent().ChatBehavior(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.GroupResponse = "all"
+	if err := e.DB.Agent().SetChatBehavior(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	// Three messages from three different users → three separate respond jobs
+	// (coalescing does not merge different-user messages).
+	orig := storage.CoalescingDelay
+	storage.CoalescingDelay = 0
+	defer func() { storage.CoalescingDelay = orig }()
+
+	for i, uid := range []int64{7, 8, 9} {
+		if err := e.DB.Agent().Accept(ctx, agent.Incoming{
+			Scope: scope, UpdateID: int64(i + 1), MessageID: int64(i + 1),
+			UserID: uid, ChatType: "group", Text: "hi", SentAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Jobs are claimed in queue-ID order (lowest first). The first two must
+	// skip silently; the third sends the single batched reply.
+	for i := 0; i < 3; i++ {
+		job := take(t, e, "respond")
+		if err := e.Respond(ctx, *job); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.DB.Queue().Complete(ctx, job.Receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if model.calls != 1 {
+		t.Fatalf("expected 1 LLM call (last job only), got %d", model.calls)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("expected 1 message sent (last job only), got %d", sender.calls)
+	}
+}

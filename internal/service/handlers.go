@@ -315,6 +315,18 @@ func (e *Engine) Respond(ctx context.Context, job queue.Job) error {
 		return err
 	}
 	if stored == "" {
+		// Batch: if newer respond jobs are already queued in this scope, skip and
+		// let the last one answer the full conversation in a single turn. Only
+		// applies to non-task, non-edited, non-addressed jobs so that explicit
+		// mentions and task-driven replies always fire.
+		if payload.MessageID > 0 && payload.Prompt == "" && !payload.Edited && !payload.Addressed {
+			if hasNewer, checkErr := store.HasPendingRespondInScope(ctx, job.Scope, job.ID); checkErr == nil && hasNewer {
+				e.log().Info("reply batched: newer respond pending, deferring to last job",
+					"kind", job.Kind, "bot", e.botName(job.Scope.BotID),
+					"chat_id", job.Scope.ChatID, "message_id", payload.MessageID)
+				return nil
+			}
+		}
 		// If a task run already replied after the target message, skip to avoid
 		// a duplicate answer. Only applies to non-task, non-edited, non-addressed
 		// jobs: tasks must run regardless, edits always deserve a re-answer, and
