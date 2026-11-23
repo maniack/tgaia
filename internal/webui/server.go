@@ -203,10 +203,23 @@ func (s *Server) ObservabilityHandler() http.Handler {
 				http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
 				return
 			}
+			scopeRows, _ := s.DB.QueueScopeMetrics(r.Context())
 			s.Monitor.Metrics(w, r)
 			fmt.Fprintln(w, "# TYPE tgaia_queue_jobs gauge")
 			for _, row := range rows {
 				fmt.Fprintf(w, "tgaia_queue_jobs{status=%q} %d\n", row.Status, row.Count)
+			}
+			if len(scopeRows) > 0 {
+				nowMs := time.Now().UnixMilli()
+				fmt.Fprintln(w, "# TYPE tgaia_queue_oldest_pending_seconds gauge")
+				for _, row := range scopeRows {
+					age := float64(nowMs-row.OldestPendingMs) / 1000.0
+					if age < 0 {
+						age = 0
+					}
+					fmt.Fprintf(w, "tgaia_queue_oldest_pending_seconds{agent=%q,bot=%q,chat=%q} %f\n",
+						row.AgentID, fmt.Sprint(row.BotID), fmt.Sprint(row.ChatID), age)
+				}
 			}
 		})
 	}
