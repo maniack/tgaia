@@ -1,0 +1,1 @@
+ALTER TABLE queue_jobs ADD COLUMN phase TEXT NOT NULL DEFAULT '';

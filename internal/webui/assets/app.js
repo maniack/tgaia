@@ -177,7 +177,9 @@ function renderJobs(items){
   cell(row,`${item.agent_id} · bot ${item.bot_id} · chat ${item.chat_id}${item.thread_id?' · topic '+item.thread_id:''}`);
   const statusBadge=element('span');statusBadge.append(badge(item.status,item.status==='dead'||item.status==='retry'));if(item.scope_paused)statusBadge.append(badge('paused',true,'warn'));cell(row,statusBadge);
   const desc=element('div',jobDescription(item));
+  if(item.phase)desc.append(element('small',item.phase));
   if(item.failure_class)desc.append(element('small',failureLabel(item)));
+  if(item.status==='leased'&&item.lease_until){const rem=Math.round((Number(item.lease_until)-Date.now())/1000);desc.append(element('small',rem>0?`lease ${rem}s`:'lease expired'))}
   if(item.payload)desc.append(detailBlock('Payload',item.payload));
   cell(row,desc);
   cell(row,item.created_at?fmtTime(Number(item.created_at)):'');
@@ -188,7 +190,7 @@ function renderJobs(items){
   if(!item.scope_paused&&(item.status==='pending'||item.status==='retry'||item.status==='leased'))acts.push({label:'Pause scope',action:async()=>{if(await confirmAsync(`Pause scope (bot ${item.bot_id}, chat ${item.chat_id})?`,'No new jobs will be claimed from this scope until resumed.','Pause')){await api('/api/queue-pause','POST',scope);notice('Scope paused.');await loadJobs()}}});
   if(item.scope_paused)acts.push({label:'Resume scope',action:async()=>{await api('/api/queue-resume','POST',scope);notice('Scope resumed.');await loadJobs()}});
   cell(row,acts.length?actionMenu('Job actions',acts):'');
-  return keyed(row,`job/${item.id}`,{id:item.id,status:item.status,scope_paused:!!item.scope_paused,attempts:item.attempts,failure_class:item.failure_class||'',updated_at:item.updated_at});
+  return keyed(row,`job/${item.id}`,{id:item.id,status:item.status,scope_paused:!!item.scope_paused,attempts:item.attempts,failure_class:item.failure_class||'',phase:item.phase||'',lease_until:item.lease_until||0,updated_at:item.updated_at});
  });
  reconcile($('jobs-list'),nodes,filtered.length===0&&(kind||status)?'No jobs match the filter.':'No jobs yet.',6);
 }
@@ -197,7 +199,7 @@ function renderBacklog(rows){
   const tr=element('tr');
   cell(tr,`${row.agent_id} · bot ${row.bot_id} · chat ${row.chat_id}`);
   cell(tr,row.pending||'—');
-  cell(tr,row.leased||'—');
+  const leasedCell=element('span',row.leased||'—');if(row.active_phase&&row.leased)leasedCell.append(element('small',` · ${row.active_phase}`));cell(tr,leasedCell);
   cell(tr,row.retry||'—');
   cell(tr,row.oldest_pending_ms?fmtTime(Number(row.oldest_pending_ms)):'—');
   const st=element('span');if(row.scope_paused)st.append(badge('paused',true,'warn'));cell(tr,st);

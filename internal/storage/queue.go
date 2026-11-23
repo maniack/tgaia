@@ -294,16 +294,26 @@ func (q *Queue) ResumeScope(ctx context.Context, agentID string, botID, chatID i
 	return nil
 }
 
+// UpdatePhase records the current processing phase of a leased job for operator visibility.
+// Phase is a short label such as "tool_open", "tool_round", "final". Empty string clears it.
+func (q *Queue) UpdatePhase(ctx context.Context, r queue.Receipt, phase string) error {
+	if len(phase) > 64 {
+		return errors.New("phase too long")
+	}
+	return q.owned(ctx, r, "phase=?", phase)
+}
+
 // BacklogRow summarises the active queue depth for one scope.
 type BacklogRow struct {
-	AgentID        string `json:"agent_id"`
-	BotID          int64  `json:"bot_id"`
-	ChatID         int64  `json:"chat_id"`
-	Pending        int64  `json:"pending"`
-	Leased         int64  `json:"leased"`
-	Retry          int64  `json:"retry"`
-	OldestPendingMs int64 `json:"oldest_pending_ms"`
-	ScopePaused    bool   `json:"scope_paused"`
+	AgentID         string `json:"agent_id"`
+	BotID           int64  `json:"bot_id"`
+	ChatID          int64  `json:"chat_id"`
+	Pending         int64  `json:"pending"`
+	Leased          int64  `json:"leased"`
+	Retry           int64  `json:"retry"`
+	OldestPendingMs int64  `json:"oldest_pending_ms"`
+	ActivePhase     string `json:"active_phase"`
+	ScopePaused     bool   `json:"scope_paused"`
 }
 
 // Backlog returns one row per scope that has pending, leased, or retry jobs.
@@ -315,6 +325,7 @@ SELECT j.agent_id,j.bot_id,j.chat_id,
  SUM(CASE WHEN j.status='leased'  THEN 1 ELSE 0 END) AS leased,
  SUM(CASE WHEN j.status='retry'   THEN 1 ELSE 0 END) AS retry,
  MIN(CASE WHEN j.status='pending' THEN j.available_at END) AS oldest_pending_ms,
+ MAX(CASE WHEN j.status='leased'  THEN j.phase END) AS active_phase,
  EXISTS(SELECT 1 FROM queue_paused_scopes p WHERE p.agent_id=j.agent_id AND p.bot_id=j.bot_id AND p.chat_id=j.chat_id) AS scope_paused
 FROM queue_jobs j
 WHERE j.status IN ('pending','leased','retry')
