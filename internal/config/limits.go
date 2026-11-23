@@ -28,7 +28,7 @@ var limitSpecs = map[string]limitSpec{
 	"compaction_min_messages": {"10", 1, 200, false}, "compaction_summary_chars": {"10000", 500, 32000, false},
 	"tool_timeout": {"5m", 1000, 3600000, true}, "tool_rounds": {"4", 1, 32, false}, "tool_calls": {"8", 1, 64, false}, "tool_context_bytes": {"118000", 1000, 950000, false}, "tool_output_tokens": {"4096", 64, 65536, false},
 	"media_messages":          {"4", 1, 20, false},
-	"llm_calls_per_chat_hour": {"0", 0, 100000, false}, "compaction_calls_per_chat_hour": {"0", 0, 100000, false}, "active_tasks_per_user": {"0", 0, 10000, false},
+	"llm_calls_per_chat_hour": {"0", 0, 100000, false}, "compaction_calls_per_chat_hour": {"0", 0, 100000, false}, "active_tasks_per_user": {"5", 0, 10000, false}, "task_min_interval_group": {"300", 0, 86400, false},
 	"vfs_namespace_bytes": {"1048576", 4096, 104857600, false},
 }
 

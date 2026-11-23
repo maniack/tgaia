@@ -184,6 +184,19 @@ func (b *builtinTools) view(task agent.Task, loc *time.Location) taskView {
 	return taskView{ID: task.ID, Prompt: task.Prompt, NextRun: describeRun(at, loc), NextRunUTC: at.Format(time.RFC3339), Recurrence: describeInterval(task.IntervalMS / 1000), IntervalSeconds: task.IntervalMS / 1000, Active: task.Active, OwnerUserID: task.UserID, Mine: task.UserID == b.job.ActorUserID}
 }
 
+// taskMinInterval returns the minimum allowed interval_seconds for the current
+// chat: the group-specific floor for group/supergroup chats, otherwise 60 s.
+func (b *builtinTools) taskMinInterval(ctx context.Context) int64 {
+	if groupMin := int64(b.engine.Config.Limit("task_min_interval_group")); groupMin > 60 {
+		if beh, err := b.engine.DB.Agent().ChatBehavior(ctx, b.job.Scope); err == nil {
+			if beh.Kind == "group" || beh.Kind == "supergroup" {
+				return groupMin
+			}
+		}
+	}
+	return 60
+}
+
 // call executes a built-in tool. An error means the outcome is unknown, like
 // a failed MCP call; validation and domain refusals are returned as is_error
 // results the model can act on.
@@ -274,8 +287,9 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 		if json.Unmarshal([]byte(args), &in) != nil || strings.TrimSpace(in.Prompt) == "" || len(in.Prompt) > 16000 {
 			return toolError("Invalid arguments: prompt is required (at most 16000 characters)."), nil
 		}
-		if in.Interval != 0 && (in.Interval < 60 || in.Interval > 31536000) {
-			return toolError("interval_seconds must be 0 or between 60 and 31536000."), nil
+		minInterval := b.taskMinInterval(ctx)
+		if in.Interval != 0 && (in.Interval < minInterval || in.Interval > 31536000) {
+			return toolError(fmt.Sprintf("interval_seconds must be 0 or between %d and 31536000.", minInterval)), nil
 		}
 		if !in.Confirmed {
 			tasks, err := store.Tasks(ctx, b.job.Scope)
@@ -340,8 +354,9 @@ func (b *builtinTools) call(ctx context.Context, key, name, args string) (string
 			task.Prompt = strings.TrimSpace(*in.Prompt)
 		}
 		if in.Interval != nil {
-			if *in.Interval != 0 && (*in.Interval < 60 || *in.Interval > 31536000) {
-				return toolError("interval_seconds must be 0 or between 60 and 31536000."), nil
+			minInterval := b.taskMinInterval(ctx)
+			if *in.Interval != 0 && (*in.Interval < minInterval || *in.Interval > 31536000) {
+				return toolError(fmt.Sprintf("interval_seconds must be 0 or between %d and 31536000.", minInterval)), nil
 			}
 			task.IntervalMS = *in.Interval * 1000
 		}
