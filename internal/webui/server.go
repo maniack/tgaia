@@ -208,11 +208,33 @@ func (s *Server) ObservabilityHandler() http.Handler {
 				http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
 				return
 			}
+			role := s.Config.Role
+			kinds := s.Monitor.Kinds()
+			unhandled, _ := s.DB.QueueUnhandledMetrics(r.Context(), kinds)
+			headRows, _ := s.DB.QueueScopeHeadMetrics(r.Context())
 			scopeRows, _ := s.DB.QueueScopeMetrics(r.Context())
 			s.Monitor.Metrics(w, r)
 			fmt.Fprintln(w, "# TYPE tgaia_queue_jobs gauge")
 			for _, row := range rows {
-				fmt.Fprintf(w, "tgaia_queue_jobs{status=%q} %d\n", row.Status, row.Count)
+				fmt.Fprintf(w, "tgaia_queue_jobs{status=%q,kind=%q,role=%q} %d\n", row.Status, row.Kind, role, row.Count)
+			}
+			if len(unhandled) > 0 {
+				fmt.Fprintln(w, "# TYPE tgaia_queue_unhandled_jobs gauge")
+				for _, row := range unhandled {
+					fmt.Fprintf(w, "tgaia_queue_unhandled_jobs{kind=%q,role=%q} %d\n", row.Kind, role, row.Count)
+				}
+			}
+			if len(headRows) > 0 {
+				nowMs := time.Now().UnixMilli()
+				fmt.Fprintln(w, "# TYPE tgaia_queue_scope_head_age_seconds gauge")
+				for _, row := range headRows {
+					age := float64(nowMs-row.HeadSinceMs) / 1000.0
+					if age < 0 {
+						age = 0
+					}
+					fmt.Fprintf(w, "tgaia_queue_scope_head_age_seconds{agent=%q,bot=%q,chat=%q,kind=%q,role=%q} %f\n",
+						row.AgentID, fmt.Sprint(row.BotID), fmt.Sprint(row.ChatID), row.Kind, role, age)
+				}
 			}
 			if len(scopeRows) > 0 {
 				nowMs := time.Now().UnixMilli()
@@ -222,8 +244,8 @@ func (s *Server) ObservabilityHandler() http.Handler {
 					if age < 0 {
 						age = 0
 					}
-					fmt.Fprintf(w, "tgaia_queue_oldest_pending_seconds{agent=%q,bot=%q,chat=%q} %f\n",
-						row.AgentID, fmt.Sprint(row.BotID), fmt.Sprint(row.ChatID), age)
+					fmt.Fprintf(w, "tgaia_queue_oldest_pending_seconds{agent=%q,bot=%q,chat=%q,role=%q} %f\n",
+						row.AgentID, fmt.Sprint(row.BotID), fmt.Sprint(row.ChatID), role, age)
 				}
 			}
 		})

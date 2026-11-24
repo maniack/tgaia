@@ -414,7 +414,7 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	r := &runtime{monitor: telemetry.New(), base: base, db: db, settings: settings, issuer: base.OIDCIssuer}
+	r := &runtime{monitor: telemetry.New(service.HandlerKinds()), base: base, db: db, settings: settings, issuer: base.OIDCIssuer}
 	defer r.monitor.Close()
 	if base.OIDCMode == "mock" {
 		issuer, close, err := devmode.OIDC(base.OIDCClientID)
@@ -558,6 +558,8 @@ func Run(parent context.Context, dbCfg config.Config, base config.App, out io.Wr
 					current.engine.Failed(ctx, job, class)
 				}
 			})
+			worker.OnClaim(r.monitor.OnClaim)
+			worker.OnSettleError(r.monitor.OnSettleError)
 			workers = startGroup(ctx, func(ctx context.Context) {
 				var wg sync.WaitGroup
 				wg.Add(2)

@@ -50,21 +50,58 @@ type measurement struct {
 	classes                          map[string]int64
 	terminals                        map[string]int64
 }
+
+type claimCounters struct {
+	claimed, empty, errors atomic.Int64
+	lastTs                 atomic.Int64 // unix seconds of last successful claim
+}
+
 type Monitor struct {
 	WorkerRunning atomic.Bool
 	mu            sync.Mutex
 	endpoint      string
 	provider      *sdktrace.TracerProvider
 	jobs          map[string]*measurement
+	kinds         []string
+	claims        claimCounters
+	settleMu      sync.Mutex
+	settleErrors  map[string]int64 // op -> count
 }
 
-func New() *Monitor {
-	return &Monitor{jobs: map[string]*measurement{
-		"respond":         {classes: map[string]int64{}, terminals: map[string]int64{}},
-		"compact":         {classes: map[string]int64{}, terminals: map[string]int64{}},
-		"review_behavior": {classes: map[string]int64{}, terminals: map[string]int64{}},
-		"message_action":  {classes: map[string]int64{}, terminals: map[string]int64{}},
-	}}
+// New creates a Monitor that tracks the given job kinds.
+func New(kinds []string) *Monitor {
+	jobs := make(map[string]*measurement, len(kinds))
+	for _, k := range kinds {
+		jobs[k] = &measurement{classes: map[string]int64{}, terminals: map[string]int64{}}
+	}
+	ks := make([]string, len(kinds))
+	copy(ks, kinds)
+	sort.Strings(ks)
+	return &Monitor{jobs: jobs, kinds: ks, settleErrors: map[string]int64{}}
+}
+
+// Kinds returns the job kinds this monitor tracks.
+func (m *Monitor) Kinds() []string { return m.kinds }
+
+// OnClaim records a claim attempt result: "claimed", "empty", or "error".
+func (m *Monitor) OnClaim(result string) {
+	switch result {
+	case "claimed":
+		m.claims.claimed.Add(1)
+		m.claims.lastTs.Store(time.Now().Unix())
+	case "empty":
+		m.claims.empty.Add(1)
+	default:
+		m.claims.errors.Add(1)
+	}
+}
+
+// OnSettleError records a failed settlement write for the given op
+// ("complete", "retry", "fail").
+func (m *Monitor) OnSettleError(op string) {
+	m.settleMu.Lock()
+	m.settleErrors[op]++
+	m.settleMu.Unlock()
 }
 
 // failureClasses bounds the label set; classes outside it count as "other".
@@ -156,8 +193,19 @@ func (m *Monitor) Metrics(w http.ResponseWriter, r *http.Request) {
 		running = 1
 	}
 	fmt.Fprintf(w, "tgaia_worker_running %d\n", running)
+	fmt.Fprintln(w, "# TYPE tgaia_worker_kind_info gauge")
+	for _, kind := range m.kinds {
+		fmt.Fprintf(w, "tgaia_worker_kind_info{kind=%q} 1\n", kind)
+	}
+	fmt.Fprintln(w, "# TYPE tgaia_queue_claims_total counter")
+	fmt.Fprintf(w, "tgaia_queue_claims_total{result=\"claimed\"} %d\ntgaia_queue_claims_total{result=\"empty\"} %d\ntgaia_queue_claims_total{result=\"error\"} %d\n",
+		m.claims.claimed.Load(), m.claims.empty.Load(), m.claims.errors.Load())
+	if ts := m.claims.lastTs.Load(); ts > 0 {
+		fmt.Fprintln(w, "# TYPE tgaia_queue_last_claim_timestamp_seconds gauge")
+		fmt.Fprintf(w, "tgaia_queue_last_claim_timestamp_seconds %d\n", ts)
+	}
 	fmt.Fprintln(w, "# TYPE tgaia_jobs_total counter\n# TYPE tgaia_job_errors_total counter\n# TYPE tgaia_job_duration_seconds_sum counter\n# TYPE tgaia_jobs_inflight gauge\n# TYPE tgaia_job_rounds_total counter\n# TYPE tgaia_job_denied_calls_total counter")
-	for _, kind := range []string{"respond", "compact", "review_behavior", "message_action"} {
+	for _, kind := range m.kinds {
 		v := m.jobs[kind]
 		fmt.Fprintf(w, "tgaia_jobs_total{kind=%q} %d\ntgaia_job_errors_total{kind=%q} %d\ntgaia_job_duration_seconds_sum{kind=%q} %f\ntgaia_jobs_inflight{kind=%q} %d\ntgaia_job_rounds_total{kind=%q} %d\ntgaia_job_denied_calls_total{kind=%q} %d\n",
 			kind, v.count.Load(),
@@ -169,7 +217,8 @@ func (m *Monitor) Metrics(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	fmt.Fprintln(w, "# TYPE tgaia_queue_failures_total counter")
-	for _, kind := range []string{"respond", "compact", "review_behavior", "message_action"} {
+	firstTerminal := true
+	for _, kind := range m.kinds {
 		v := m.jobs[kind]
 		v.mu.Lock()
 		classes := make([]string, 0, len(v.classes))
@@ -191,12 +240,30 @@ func (m *Monitor) Metrics(w http.ResponseWriter, r *http.Request) {
 		}
 		v.mu.Unlock()
 		if len(terminals) > 0 {
-			if kind == "respond" {
+			if firstTerminal {
 				fmt.Fprintln(w, "# TYPE tgaia_job_terminal_total counter")
+				firstTerminal = false
 			}
 			for i, t := range terminals {
 				fmt.Fprintf(w, "tgaia_job_terminal_total{kind=%q,terminal=%q} %d\n", kind, t, termCounts[i])
 			}
+		}
+	}
+	m.settleMu.Lock()
+	ops := make([]string, 0, len(m.settleErrors))
+	for op := range m.settleErrors {
+		ops = append(ops, op)
+	}
+	sort.Strings(ops)
+	counts := make([]int64, len(ops))
+	for i, op := range ops {
+		counts[i] = m.settleErrors[op]
+	}
+	m.settleMu.Unlock()
+	if len(ops) > 0 {
+		fmt.Fprintln(w, "# TYPE tgaia_queue_settle_errors_total counter")
+		for i, op := range ops {
+			fmt.Fprintf(w, "tgaia_queue_settle_errors_total{op=%q} %d\n", op, counts[i])
 		}
 	}
 }

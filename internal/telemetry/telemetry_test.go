@@ -19,7 +19,7 @@ func TestJobMetricsAndTrace(t *testing.T) {
 	otel.SetTracerProvider(p)
 	defer otel.SetTracerProvider(old)
 	defer p.Shutdown(context.Background())
-	m := New()
+	m := New([]string{"respond"})
 	err := m.Handle(context.Background(), queue.Job{Kind: "respond"}, func(context.Context, queue.Job) error { return errors.New("secret failure text") })
 	if err == nil {
 		t.Fatal("lost error")
@@ -36,7 +36,7 @@ func TestJobMetricsAndTrace(t *testing.T) {
 }
 
 func TestRunMetricsRecorded(t *testing.T) {
-	m := New()
+	m := New([]string{"respond"})
 	err := m.Handle(context.Background(), queue.Job{Kind: "respond"}, func(ctx context.Context, _ queue.Job) error {
 		jm := JobMetricsFromContext(ctx)
 		if jm == nil {

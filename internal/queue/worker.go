@@ -26,18 +26,28 @@ func DefaultOptions() Options {
 }
 
 type Worker struct {
-	store    Store
-	handlers map[string]Handler
-	kinds    []string
-	opts     Options
-	log      *slog.Logger
-	dead     func(context.Context, Job, string)
+	store        Store
+	handlers     map[string]Handler
+	kinds        []string
+	opts         Options
+	log          *slog.Logger
+	dead         func(context.Context, Job, string)
+	onClaim      func(string)
+	onSettleErr  func(string)
 }
 
 // OnDead registers a best-effort notification that runs once, after a job was
 // retired as dead by this worker (terminal failure or exhausted attempts). It
 // must be set before Run and must not be used for durable work.
 func (w *Worker) OnDead(fn func(ctx context.Context, job Job, class string)) { w.dead = fn }
+
+// OnClaim registers a callback called on every Claim attempt with result
+// "claimed", "empty", or "error". Must be set before Run.
+func (w *Worker) OnClaim(fn func(result string)) { w.onClaim = fn }
+
+// OnSettleError registers a callback called when a settlement store write
+// fails (op is "complete", "retry", or "fail"). Must be set before Run.
+func (w *Worker) OnSettleError(fn func(op string)) { w.onSettleErr = fn }
 
 func NewWorker(store Store, handlers map[string]Handler, opts Options, log *slog.Logger) (*Worker, error) {
 	if store == nil || log == nil || len(handlers) == 0 || opts.Concurrency < 1 || opts.Concurrency > 256 || opts.PollInterval <= 0 || opts.Lease < time.Millisecond || opts.Lease > 24*time.Hour || opts.Heartbeat <= 0 || opts.Heartbeat > opts.Lease/3 || opts.TaskTimeout <= 0 || opts.ShutdownTimeout <= 0 || opts.RetryBase < time.Millisecond || opts.RetryMax < opts.RetryBase || opts.RetryMax > 24*time.Hour {
@@ -88,6 +98,16 @@ func wait(ctx context.Context, d time.Duration) bool {
 func (w *Worker) loop(ctx context.Context) {
 	for ctx.Err() == nil {
 		job, err := w.store.Claim(ctx, w.kinds, w.opts.Lease)
+		if w.onClaim != nil {
+			switch {
+			case err != nil:
+				w.onClaim("error")
+			case job == nil:
+				w.onClaim("empty")
+			default:
+				w.onClaim("claimed")
+			}
+		}
 		if err != nil || job == nil {
 			if err != nil && ctx.Err() == nil {
 				w.log.ErrorContext(ctx, "queue claim failed")
@@ -144,6 +164,9 @@ func (w *Worker) execute(parent context.Context, job Job) {
 	defer stop()
 	if err == nil {
 		if err = w.store.Complete(settleCtx, job.Receipt); err != nil {
+			if w.onSettleErr != nil {
+				w.onSettleErr("complete")
+			}
 			w.log.WarnContext(parent, "queue settlement failed", "job_id", job.ID)
 		}
 		return
@@ -159,6 +182,13 @@ func (w *Worker) execute(parent context.Context, job Job) {
 		err = w.store.Retry(settleCtx, job.Receipt, w.backoff(job.Attempt), class)
 	}
 	if err != nil {
+		if w.onSettleErr != nil {
+			if terminal {
+				w.onSettleErr("fail")
+			} else {
+				w.onSettleErr("retry")
+			}
+		}
 		w.log.WarnContext(parent, "queue settlement failed", "job_id", job.ID)
 		return
 	}
