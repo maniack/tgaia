@@ -328,7 +328,7 @@ func (r *runtime) webhookHandler(next *snapshot) http.Handler {
 }
 func (r *runtime) handlers() map[string]queue.Handler {
 	handlers := map[string]queue.Handler{}
-	for _, kind := range []string{"respond", "compact", "review_behavior", "message_action", "media", "failure_notice"} {
+	for _, kind := range service.HandlerKinds() {
 		handlers[kind] = func(ctx context.Context, job queue.Job) error {
 			current := r.current.Load()
 			if current == nil || job.Scope.AgentID != current.config.AgentID {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -132,6 +133,11 @@ const replyLimit = 64000
 func (e *Engine) Handlers() map[string]queue.Handler {
 	return map[string]queue.Handler{"respond": e.Respond, "compact": e.CompactBackground, "compact_session": e.CompactSession, "review_behavior": e.ReviewBehavior, "message_action": e.MessageAction, "media": e.Describe, "failure_notice": e.FailureNotice}
 }
+
+// HandlerKinds returns the canonical set of job kinds this engine handles.
+// Use this as the single source of truth wherever a list of kinds is needed
+// (e.g. worker registration) so that adding a new handler here is sufficient.
+func HandlerKinds() []string { return slices.Sorted(maps.Keys((*Engine)(nil).Handlers())) }
 func modelContext(c agent.Context, budgets ...int) string {
 	budget := 100000
 	if len(budgets) > 0 {
